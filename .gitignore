@@ -1,5 +1,5 @@
-# Binaries
-dockstart
+# Binaries (in root only)
+/dockstart
 *.exe
 *.exe~
 *.dll
