@@ -155,7 +155,29 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// TODO: Generate Dockerfile (Issue #7)
+	// Step 4: Generate Dockerfile
+	fmt.Println("\n📝 Generating Dockerfile...")
+	dockerfileGen := generator.NewDockerfileGenerator()
+
+	if dryRun {
+		content, err := dockerfileGen.GenerateContent(detection, projectName)
+		if err != nil {
+			return fmt.Errorf("dockerfile generation failed: %w", err)
+		}
+		fmt.Println("\n--- .devcontainer/Dockerfile ---")
+		fmt.Println(string(content))
+		fmt.Println("--- end ---")
+	} else {
+		dockerfilePath := filepath.Join(absPath, ".devcontainer", "Dockerfile")
+		if _, err := os.Stat(dockerfilePath); err == nil && !force {
+			return fmt.Errorf("Dockerfile already exists. Use --force to overwrite")
+		}
+
+		if err := dockerfileGen.Generate(detection, absPath, projectName); err != nil {
+			return fmt.Errorf("dockerfile generation failed: %w", err)
+		}
+		fmt.Println("   ✅ Created .devcontainer/Dockerfile")
+	}
 
 	fmt.Println("\n✨ Done!")
 	return nil
