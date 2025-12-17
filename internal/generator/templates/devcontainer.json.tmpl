@@ -1,0 +1,30 @@
+{
+	"name": "{{.Name}}",
+{{- if .UseCompose}}
+	"dockerComposeFile": "docker-compose.yml",
+	"service": "app",
+	"workspaceFolder": "/workspace",
+{{- else}}
+	"image": "{{.Image}}",
+	"workspaceFolder": "/workspace",
+{{- end}}
+{{- if .Extensions}}
+	"customizations": {
+		"vscode": {
+			"extensions": [
+{{- range $i, $ext := .Extensions}}
+{{- if $i}},{{end}}
+				"{{$ext}}"
+{{- end}}
+			]
+		}
+	},
+{{- end}}
+{{- if .ForwardPorts}}
+	"forwardPorts": [{{range $i, $port := .ForwardPorts}}{{if $i}}, {{end}}{{$port}}{{end}}],
+{{- end}}
+{{- if .PostCreateCommand}}
+	"postCreateCommand": "{{.PostCreateCommand}}",
+{{- end}}
+	"remoteUser": "{{.RemoteUser}}"
+}
