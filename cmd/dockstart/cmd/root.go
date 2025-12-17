@@ -129,7 +129,32 @@ func run(cmd *cobra.Command, args []string) error {
 		fmt.Println("   ✅ Created .devcontainer/devcontainer.json")
 	}
 
-	// TODO: Generate docker-compose.yml (Issue #6)
+	// Step 3: Generate docker-compose.yml (only when services detected)
+	if len(detection.Services) > 0 {
+		fmt.Println("\n📝 Generating docker-compose.yml...")
+		composeGen := generator.NewComposeGenerator()
+
+		if dryRun {
+			content, err := composeGen.GenerateContent(detection, projectName)
+			if err != nil {
+				return fmt.Errorf("compose generation failed: %w", err)
+			}
+			fmt.Println("\n--- .devcontainer/docker-compose.yml ---")
+			fmt.Println(string(content))
+			fmt.Println("--- end ---")
+		} else {
+			composePath := filepath.Join(absPath, ".devcontainer", "docker-compose.yml")
+			if _, err := os.Stat(composePath); err == nil && !force {
+				return fmt.Errorf("docker-compose.yml already exists. Use --force to overwrite")
+			}
+
+			if err := composeGen.Generate(detection, absPath, projectName); err != nil {
+				return fmt.Errorf("compose generation failed: %w", err)
+			}
+			fmt.Println("   ✅ Created .devcontainer/docker-compose.yml")
+		}
+	}
+
 	// TODO: Generate Dockerfile (Issue #7)
 
 	fmt.Println("\n✨ Done!")
