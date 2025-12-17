@@ -1,0 +1,260 @@
+package detector
+
+import (
+	"bufio"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/BurntSushi/toml"
+	"github.com/jpequegn/dockstart/internal/models"
+)
+
+// PythonDetector detects Python projects by analyzing pyproject.toml or requirements.txt.
+type PythonDetector struct{}
+
+// NewPythonDetector creates a new Python detector.
+func NewPythonDetector() *PythonDetector {
+	return &PythonDetector{}
+}
+
+// Name returns the detector identifier.
+func (d *PythonDetector) Name() string {
+	return "python"
+}
+
+// pyprojectTOML represents the structure of a pyproject.toml file.
+// We only parse the fields we care about.
+type pyprojectTOML struct {
+	Project struct {
+		Name            string   `toml:"name"`
+		RequiresPython  string   `toml:"requires-python"`
+		Dependencies    []string `toml:"dependencies"`
+		OptionalDeps    map[string][]string `toml:"optional-dependencies"`
+	} `toml:"project"`
+	Tool struct {
+		Poetry struct {
+			Name         string            `toml:"name"`
+			Dependencies map[string]interface{} `toml:"dependencies"`
+			DevDeps      map[string]interface{} `toml:"dev-dependencies"`
+		} `toml:"poetry"`
+	} `toml:"tool"`
+}
+
+// Detect analyzes the path for a Python project.
+// It looks for pyproject.toml or requirements.txt and extracts version and service information.
+func (d *PythonDetector) Detect(path string) (*models.Detection, error) {
+	// Try pyproject.toml first (modern Python)
+	pyprojectPath := filepath.Join(path, "pyproject.toml")
+	if _, err := os.Stat(pyprojectPath); err == nil {
+		return d.detectFromPyproject(pyprojectPath)
+	}
+
+	// Fall back to requirements.txt
+	requirementsPath := filepath.Join(path, "requirements.txt")
+	if _, err := os.Stat(requirementsPath); err == nil {
+		return d.detectFromRequirements(requirementsPath)
+	}
+
+	// Not a Python project
+	return nil, nil
+}
+
+// detectFromPyproject parses pyproject.toml for Python project info.
+func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, error) {
+	var config pyprojectTOML
+	if _, err := toml.DecodeFile(path, &config); err != nil {
+		return nil, err
+	}
+
+	// Collect all dependencies and extract package names
+	var deps []string
+	for _, dep := range config.Project.Dependencies {
+		deps = append(deps, d.extractPackageName(dep))
+	}
+	for _, optDeps := range config.Project.OptionalDeps {
+		for _, dep := range optDeps {
+			deps = append(deps, d.extractPackageName(dep))
+		}
+	}
+
+	// Also check Poetry format (Poetry uses map keys as package names)
+	for dep := range config.Tool.Poetry.Dependencies {
+		if dep != "python" { // Skip python version specifier
+			deps = append(deps, dep)
+		}
+	}
+	for dep := range config.Tool.Poetry.DevDeps {
+		deps = append(deps, dep)
+	}
+
+	detection := &models.Detection{
+		Language:   "python",
+		Version:    d.extractVersion(config),
+		Services:   d.detectServicesFromDeps(deps),
+		Confidence: d.calculateConfidencePyproject(config),
+	}
+
+	return detection, nil
+}
+
+// extractPackageName extracts the package name from a dependency string.
+// Examples: "redis>=4.0.0" -> "redis", "psycopg2-binary" -> "psycopg2-binary"
+func (d *PythonDetector) extractPackageName(dep string) string {
+	// Match package name (before any version specifier)
+	re := regexp.MustCompile(`^([a-zA-Z0-9_-]+)`)
+	if matches := re.FindStringSubmatch(dep); matches != nil {
+		return strings.ToLower(matches[1])
+	}
+	return strings.ToLower(dep)
+}
+
+// detectFromRequirements parses requirements.txt for Python project info.
+func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var deps []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Extract package name (before any version specifier)
+		// e.g., "psycopg2>=2.9.0" -> "psycopg2"
+		re := regexp.MustCompile(`^([a-zA-Z0-9_-]+)`)
+		if matches := re.FindStringSubmatch(line); matches != nil {
+			deps = append(deps, strings.ToLower(matches[1]))
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	detection := &models.Detection{
+		Language:   "python",
+		Version:    "3.11", // Default when not specified
+		Services:   d.detectServicesFromDeps(deps),
+		Confidence: 0.6, // Lower confidence without pyproject.toml
+	}
+
+	return detection, nil
+}
+
+// extractVersion extracts the Python version from pyproject.toml.
+func (d *PythonDetector) extractVersion(config pyprojectTOML) string {
+	// Try project.requires-python first
+	if config.Project.RequiresPython != "" {
+		return d.parseVersionConstraint(config.Project.RequiresPython)
+	}
+
+	// Try Poetry python dependency
+	if pythonVer, ok := config.Tool.Poetry.Dependencies["python"]; ok {
+		if verStr, ok := pythonVer.(string); ok {
+			return d.parseVersionConstraint(verStr)
+		}
+	}
+
+	// Default to Python 3.11 (current stable)
+	return "3.11"
+}
+
+// parseVersionConstraint extracts the major.minor version from a constraint.
+// Examples: ">=3.10" -> "3.10", "^3.11" -> "3.11", ">=3.9,<4.0" -> "3.9"
+func (d *PythonDetector) parseVersionConstraint(constraint string) string {
+	// Match version pattern like 3.10, 3.11, etc.
+	re := regexp.MustCompile(`(\d+\.\d+)`)
+	match := re.FindString(constraint)
+	if match != "" {
+		return match
+	}
+	return "3.11" // Default
+}
+
+// detectServicesFromDeps identifies backing services from dependencies.
+func (d *PythonDetector) detectServicesFromDeps(deps []string) []string {
+	var services []string
+
+	// PostgreSQL indicators
+	postgresPackages := []string{
+		"psycopg2", "psycopg2-binary", "psycopg",
+		"asyncpg", "sqlalchemy", "django",
+		"databases", "tortoise-orm", "piccolo",
+	}
+
+	// Redis indicators
+	redisPackages := []string{
+		"redis", "aioredis", "redis-py",
+		"celery", "rq", "dramatiq",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		// Check PostgreSQL
+		for _, pkg := range postgresPackages {
+			if depLower == pkg || strings.HasPrefix(depLower, pkg+"-") {
+				if !containsService(services, "postgres") {
+					services = append(services, "postgres")
+				}
+				break
+			}
+		}
+
+		// Check Redis
+		for _, pkg := range redisPackages {
+			if depLower == pkg || strings.HasPrefix(depLower, pkg+"-") {
+				if !containsService(services, "redis") {
+					services = append(services, "redis")
+				}
+				break
+			}
+		}
+	}
+
+	return services
+}
+
+// calculateConfidencePyproject determines how confident we are in the detection.
+func (d *PythonDetector) calculateConfidencePyproject(config pyprojectTOML) float64 {
+	confidence := 0.7 // Base confidence for having pyproject.toml
+
+	// Higher confidence if project name is specified
+	if config.Project.Name != "" || config.Tool.Poetry.Name != "" {
+		confidence += 0.1
+	}
+
+	// Higher confidence if Python version is specified
+	if config.Project.RequiresPython != "" {
+		confidence += 0.1
+	}
+
+	// Higher confidence if dependencies exist
+	if len(config.Project.Dependencies) > 0 || len(config.Tool.Poetry.Dependencies) > 0 {
+		confidence += 0.1
+	}
+
+	// Cap at 1.0
+	if confidence > 1.0 {
+		confidence = 1.0
+	}
+
+	return confidence
+}
+
+// GetVSCodeExtensions returns recommended VS Code extensions for Python.
+func (d *PythonDetector) GetVSCodeExtensions() []string {
+	return []string{
+		"ms-python.python",
+		"ms-python.vscode-pylance",
+	}
+}

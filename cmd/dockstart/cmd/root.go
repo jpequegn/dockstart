@@ -91,7 +91,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	if detection == nil {
 		fmt.Println("   ⚠️  No supported language detected")
-		fmt.Println("   Supported: Node.js (package.json), Go (go.mod)")
+		fmt.Println("   Supported: Node.js (package.json), Go (go.mod), Python (pyproject.toml/requirements.txt), Rust (Cargo.toml)")
 		return nil
 	}
 
