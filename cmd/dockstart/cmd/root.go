@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jpequegn/dockstart/internal/detector"
+	"github.com/jpequegn/dockstart/internal/generator"
 	"github.com/spf13/cobra"
 )
 
@@ -71,17 +73,65 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("path is not a directory: %s", absPath)
 	}
 
+	// Get project name from directory name
+	projectName := filepath.Base(absPath)
 	fmt.Printf("📂 Analyzing %s...\n", absPath)
 
 	if dryRun {
 		fmt.Println("🔍 Dry run mode - no files will be written")
 	}
 
-	// TODO: Implement detection logic (Issue #3, #4)
-	fmt.Println("   ⏳ Detection not yet implemented")
+	// Step 1: Detect project language and services
+	fmt.Println("\n🔍 Detecting project configuration...")
+	registry := detector.NewRegistry()
+	detection, err := registry.DetectPrimary(absPath)
+	if err != nil {
+		return fmt.Errorf("detection failed: %w", err)
+	}
 
-	// TODO: Implement generation logic (Issue #5, #6, #7)
-	fmt.Println("   ⏳ Generation not yet implemented")
+	if detection == nil {
+		fmt.Println("   ⚠️  No supported language detected")
+		fmt.Println("   Supported: Node.js (package.json), Go (go.mod)")
+		return nil
+	}
 
+	fmt.Printf("   ✅ Detected: %s %s (confidence: %.0f%%)\n",
+		detection.Language, detection.Version, detection.Confidence*100)
+
+	if len(detection.Services) > 0 {
+		fmt.Printf("   📦 Services: %v\n", detection.Services)
+	}
+
+	// Step 2: Generate devcontainer.json
+	fmt.Println("\n📝 Generating devcontainer.json...")
+	gen := generator.NewDevcontainerGenerator()
+
+	if dryRun {
+		// Preview mode - just show what would be generated
+		content, err := gen.GenerateContent(detection, projectName)
+		if err != nil {
+			return fmt.Errorf("generation failed: %w", err)
+		}
+		fmt.Println("\n--- .devcontainer/devcontainer.json ---")
+		fmt.Println(string(content))
+		fmt.Println("--- end ---")
+	} else {
+		// Check if files already exist
+		devcontainerPath := filepath.Join(absPath, ".devcontainer", "devcontainer.json")
+		if _, err := os.Stat(devcontainerPath); err == nil && !force {
+			return fmt.Errorf("devcontainer.json already exists. Use --force to overwrite")
+		}
+
+		// Generate and write the file
+		if err := gen.Generate(detection, absPath, projectName); err != nil {
+			return fmt.Errorf("generation failed: %w", err)
+		}
+		fmt.Println("   ✅ Created .devcontainer/devcontainer.json")
+	}
+
+	// TODO: Generate docker-compose.yml (Issue #6)
+	// TODO: Generate Dockerfile (Issue #7)
+
+	fmt.Println("\n✨ Done!")
 	return nil
 }
