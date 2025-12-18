@@ -16,6 +16,14 @@ type Detection struct {
 	// Confidence is a score from 0.0 to 1.0 indicating detection certainty
 	// Higher values mean more confident detection (e.g., explicit version vs inferred)
 	Confidence float64
+
+	// LoggingLibraries is a list of detected structured logging libraries
+	// (e.g., "winston", "pino" for Node.js, "zap", "zerolog" for Go)
+	LoggingLibraries []string
+
+	// LogFormat indicates the detected or inferred log format
+	// Values: "json", "text", "unknown"
+	LogFormat string
 }
 
 // Project represents a fully analyzed project with all its detections.
@@ -45,4 +53,26 @@ func (d *Detection) AddService(service string) {
 	if !d.HasService(service) {
 		d.Services = append(d.Services, service)
 	}
+}
+
+// HasLoggingLibrary checks if a specific logging library was detected.
+func (d *Detection) HasLoggingLibrary(library string) bool {
+	for _, l := range d.LoggingLibraries {
+		if l == library {
+			return true
+		}
+	}
+	return false
+}
+
+// AddLoggingLibrary adds a logging library to the detection if not already present.
+func (d *Detection) AddLoggingLibrary(library string) {
+	if !d.HasLoggingLibrary(library) {
+		d.LoggingLibraries = append(d.LoggingLibraries, library)
+	}
+}
+
+// HasStructuredLogging returns true if any structured logging library was detected.
+func (d *Detection) HasStructuredLogging() bool {
+	return len(d.LoggingLibraries) > 0
 }
