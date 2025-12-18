@@ -54,11 +54,15 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 	// Collect all dependencies
 	deps := d.collectDependencies(config)
 
+	loggingLibs, logFormat := d.detectLogging(deps)
+
 	detection := &models.Detection{
-		Language:   "rust",
-		Version:    d.extractVersion(config),
-		Services:   d.detectServices(deps),
-		Confidence: d.calculateConfidence(config),
+		Language:         "rust",
+		Version:          d.extractVersion(config),
+		Services:         d.detectServices(deps),
+		Confidence:       d.calculateConfidence(config),
+		LoggingLibraries: loggingLibs,
+		LogFormat:        logFormat,
 	}
 
 	return detection, nil
@@ -187,4 +191,66 @@ func (d *RustDetector) GetVSCodeExtensions() []string {
 	return []string{
 		"rust-lang.rust-analyzer",
 	}
+}
+
+// detectLogging identifies structured logging libraries from Rust dependencies.
+// Returns the list of detected libraries and the inferred log format.
+func (d *RustDetector) detectLogging(deps []string) ([]string, string) {
+	var libraries []string
+	logFormat := "unknown"
+
+	// Structured logging libraries that support JSON
+	jsonLoggers := map[string]string{
+		"tracing":             "tracing",
+		"tracing-subscriber":  "tracing",
+		"slog":                "slog",
+		"slog-json":           "slog",
+	}
+
+	// Logging libraries that typically output text by default
+	textLoggers := map[string]string{
+		"log":                 "log",
+		"log4rs":              "log4rs",
+		"env_logger":          "env_logger",
+		"pretty_env_logger":   "pretty_env_logger",
+		"simple_logger":       "simple_logger",
+		"fern":                "fern",
+		"flexi_logger":        "flexi_logger",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		// Check JSON loggers first
+		for pkg, name := range jsonLoggers {
+			if depLower == pkg {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, name)
+				}
+				logFormat = "json"
+				break
+			}
+		}
+
+		// Check text loggers
+		for pkg, name := range textLoggers {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				if logFormat == "unknown" {
+					logFormat = "text"
+				}
+				break
+			}
+		}
+	}
+
+	return libraries, logFormat
 }
