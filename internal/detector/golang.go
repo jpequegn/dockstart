@@ -46,11 +46,15 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 		return nil, err
 	}
 
+	loggingLibs, logFormat := d.detectLogging(mod)
+
 	detection := &models.Detection{
-		Language:   "go",
-		Version:    mod.Version,
-		Services:   d.detectServices(mod),
-		Confidence: d.calculateConfidence(mod),
+		Language:         "go",
+		Version:          mod.Version,
+		Services:         d.detectServices(mod),
+		Confidence:       d.calculateConfidence(mod),
+		LoggingLibraries: loggingLibs,
+		LogFormat:        logFormat,
 	}
 
 	return detection, nil
@@ -191,6 +195,54 @@ func containsService(services []string, service string) bool {
 		}
 	}
 	return false
+}
+
+// detectLogging identifies structured logging libraries from Go dependencies.
+// Returns the list of detected libraries and the inferred log format.
+func (d *GoDetector) detectLogging(mod *goMod) ([]string, string) {
+	var libraries []string
+	logFormat := "unknown"
+
+	// Structured logging libraries that output JSON by default
+	jsonLoggers := map[string]string{
+		"go.uber.org/zap":                "zap",
+		"github.com/rs/zerolog":          "zerolog",
+		"log/slog":                       "slog",
+		"golang.org/x/exp/slog":          "slog",
+	}
+
+	// Logging libraries that typically output text by default
+	textLoggers := map[string]string{
+		"github.com/sirupsen/logrus":     "logrus",
+		"github.com/apex/log":            "apex-log",
+		"github.com/inconshreveable/log15": "log15",
+		"github.com/go-kit/log":          "go-kit-log",
+		"github.com/hashicorp/go-hclog":  "hclog",
+	}
+
+	for _, req := range mod.Requires {
+		// Check JSON loggers first
+		for pattern, name := range jsonLoggers {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				logFormat = "json"
+				break
+			}
+		}
+
+		// Check text loggers
+		for pattern, name := range textLoggers {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				if logFormat == "unknown" {
+					logFormat = "text"
+				}
+				break
+			}
+		}
+	}
+
+	return libraries, logFormat
 }
 
 // calculateConfidence determines how confident we are in the detection.

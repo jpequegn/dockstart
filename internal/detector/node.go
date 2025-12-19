@@ -57,11 +57,15 @@ func (d *NodeDetector) Detect(path string) (*models.Detection, error) {
 		return nil, err
 	}
 
+	loggingLibs, logFormat := d.detectLogging(pkg)
+
 	detection := &models.Detection{
-		Language:   "node",
-		Version:    d.extractVersion(pkg),
-		Services:   d.detectServices(pkg),
-		Confidence: d.calculateConfidence(pkg),
+		Language:         "node",
+		Version:          d.extractVersion(pkg),
+		Services:         d.detectServices(pkg),
+		Confidence:       d.calculateConfidence(pkg),
+		LoggingLibraries: loggingLibs,
+		LogFormat:        logFormat,
 	}
 
 	return detection, nil
@@ -127,6 +131,71 @@ func hasAnyDep(deps map[string]string, packages []string) bool {
 		}
 	}
 	return false
+}
+
+// detectLogging identifies structured logging libraries from dependencies.
+// Returns the list of detected libraries and the inferred log format.
+func (d *NodeDetector) detectLogging(pkg packageJSON) ([]string, string) {
+	var libraries []string
+	logFormat := "unknown"
+
+	// Merge all dependencies for checking
+	allDeps := make(map[string]string)
+	for k, v := range pkg.Dependencies {
+		allDeps[k] = v
+	}
+	for k, v := range pkg.DevDependencies {
+		allDeps[k] = v
+	}
+
+	// Structured logging libraries that output JSON by default
+	jsonLoggers := map[string]string{
+		"pino":      "pino",
+		"bunyan":    "bunyan",
+		"roarr":     "roarr",
+		"bole":      "bole",
+	}
+
+	// Logging libraries that can be configured for JSON
+	configurableLoggers := map[string]string{
+		"winston":     "winston",
+		"log4js":      "log4js",
+		"loglevel":    "loglevel",
+		"signale":     "signale",
+	}
+
+	// HTTP request loggers (often paired with other loggers)
+	requestLoggers := map[string]string{
+		"morgan":      "morgan",
+		"express-winston": "express-winston",
+	}
+
+	// Check JSON loggers first (they set format to json)
+	for dep, name := range jsonLoggers {
+		if _, exists := allDeps[dep]; exists {
+			libraries = append(libraries, name)
+			logFormat = "json"
+		}
+	}
+
+	// Check configurable loggers
+	for dep, name := range configurableLoggers {
+		if _, exists := allDeps[dep]; exists {
+			libraries = append(libraries, name)
+			if logFormat == "unknown" {
+				logFormat = "text" // Default for configurable loggers
+			}
+		}
+	}
+
+	// Check request loggers
+	for dep, name := range requestLoggers {
+		if _, exists := allDeps[dep]; exists {
+			libraries = append(libraries, name)
+		}
+	}
+
+	return libraries, logFormat
 }
 
 // calculateConfidence determines how confident we are in the detection.

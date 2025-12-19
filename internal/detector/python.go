@@ -89,11 +89,15 @@ func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, er
 		deps = append(deps, dep)
 	}
 
+	loggingLibs, logFormat := d.detectLogging(deps)
+
 	detection := &models.Detection{
-		Language:   "python",
-		Version:    d.extractVersion(config),
-		Services:   d.detectServicesFromDeps(deps),
-		Confidence: d.calculateConfidencePyproject(config),
+		Language:         "python",
+		Version:          d.extractVersion(config),
+		Services:         d.detectServicesFromDeps(deps),
+		Confidence:       d.calculateConfidencePyproject(config),
+		LoggingLibraries: loggingLibs,
+		LogFormat:        logFormat,
 	}
 
 	return detection, nil
@@ -140,11 +144,15 @@ func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection,
 		return nil, err
 	}
 
+	loggingLibs, logFormat := d.detectLogging(deps)
+
 	detection := &models.Detection{
-		Language:   "python",
-		Version:    "3.11", // Default when not specified
-		Services:   d.detectServicesFromDeps(deps),
-		Confidence: 0.6, // Lower confidence without pyproject.toml
+		Language:         "python",
+		Version:          "3.11", // Default when not specified
+		Services:         d.detectServicesFromDeps(deps),
+		Confidence:       0.6, // Lower confidence without pyproject.toml
+		LoggingLibraries: loggingLibs,
+		LogFormat:        logFormat,
 	}
 
 	return detection, nil
@@ -257,4 +265,67 @@ func (d *PythonDetector) GetVSCodeExtensions() []string {
 		"ms-python.python",
 		"ms-python.vscode-pylance",
 	}
+}
+
+// detectLogging identifies structured logging libraries from Python dependencies.
+// Returns the list of detected libraries and the inferred log format.
+func (d *PythonDetector) detectLogging(deps []string) ([]string, string) {
+	var libraries []string
+	logFormat := "unknown"
+
+	// Structured logging libraries that output JSON by default
+	jsonLoggers := map[string]string{
+		"structlog":           "structlog",
+		"python-json-logger":  "python-json-logger",
+		"json-logging":        "json-logging",
+		"pythonjsonlogger":    "python-json-logger",
+	}
+
+	// Logging libraries that typically output text by default
+	textLoggers := map[string]string{
+		"loguru":              "loguru",
+		"logbook":             "logbook",
+		"eliot":               "eliot",
+		"twiggy":              "twiggy",
+	}
+
+	// Logging utilities/formatters
+	loggingUtils := map[string]string{
+		"coloredlogs":         "coloredlogs",
+		"rich":                "rich",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		// Check JSON loggers first
+		for pkg, name := range jsonLoggers {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				logFormat = "json"
+				break
+			}
+		}
+
+		// Check text loggers
+		for pkg, name := range textLoggers {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				if logFormat == "unknown" {
+					logFormat = "text"
+				}
+				break
+			}
+		}
+
+		// Check logging utilities
+		for pkg, name := range loggingUtils {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+	}
+
+	return libraries, logFormat
 }
