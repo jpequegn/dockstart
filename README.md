@@ -8,6 +8,7 @@ A CLI tool that analyzes a project and generates Docker development environment 
 
 - **Language Detection**: Automatically detects Node.js, Go, Python, and Rust projects
 - **Service Detection**: Identifies PostgreSQL and Redis dependencies
+- **Log Aggregation**: Auto-configures Fluent Bit sidecar when structured logging libraries detected
 - **Complete Dev Environment**: Generates devcontainer.json, docker-compose.yml, and Dockerfile
 - **VS Code Ready**: Generated files work with VS Code's Dev Containers extension
 
@@ -126,6 +127,76 @@ volumes:
 | PostgreSQL | pg, prisma, typeorm | pgx, lib/pq | psycopg2, sqlalchemy | sqlx, diesel |
 | Redis | redis, ioredis, bull | go-redis | redis, celery | redis |
 
+## Log Aggregator Sidecar
+
+When dockstart detects structured logging libraries in your project, it automatically generates a **Fluent Bit** log aggregator sidecar. This provides centralized logging for your development environment.
+
+### Detected Logging Libraries
+
+| Language | JSON Loggers | Text Loggers |
+|----------|-------------|--------------|
+| Node.js | pino, bunyan | winston, morgan |
+| Go | zap, zerolog | logrus, slog |
+| Python | structlog, python-json-logger | loguru, logbook |
+| Rust | tracing, slog | log, env_logger |
+
+### Example with Logging
+
+```bash
+$ dockstart --dry-run ./my-express-app
+
+📂 Analyzing ./my-express-app...
+🔍 Detecting project configuration...
+   ✅ Detected: node 20 (confidence: 100%)
+   📦 Services: [postgres]
+   📋 Logging: [pino] (JSON format)
+
+📝 Generating devcontainer.json...
+📝 Generating docker-compose.yml...
+📝 Generating Dockerfile...
+📝 Generating fluent-bit.conf...
+
+✨ Done!
+```
+
+### Generated Sidecar Configuration
+
+When logging is detected, the following is added to `docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    # ... app configuration ...
+    depends_on:
+      - fluent-bit
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: app.my-app
+
+  fluent-bit:
+    image: fluent/fluent-bit:latest
+    volumes:
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+    ports:
+      - "24224:24224"
+```
+
+### Viewing Logs
+
+Logs from your application are collected by Fluent Bit and output to stdout. View them with:
+
+```bash
+# In the devcontainer terminal
+docker compose logs -f fluent-bit
+
+# Or view all logs
+docker compose logs -f
+```
+
+See [docs/sidecars/log-aggregator.md](docs/sidecars/log-aggregator.md) for detailed documentation.
+
 ## Generated Files
 
 ### devcontainer.json
@@ -135,10 +206,11 @@ volumes:
 - Port forwarding
 - Post-create commands
 
-### docker-compose.yml (when services detected)
+### docker-compose.yml (when services or logging detected)
 - App service with build context
 - PostgreSQL service with named volume
 - Redis service with named volume
+- Fluent Bit log aggregator sidecar (when logging libraries detected)
 - Environment variables for service URLs
 
 ### Dockerfile
@@ -165,6 +237,10 @@ docker build -t dockstart .
 dockstart/
 ├── cmd/dockstart/          # CLI entry point
 │   └── cmd/                # Cobra commands
+├── docs/
+│   ├── adr/                # Architecture Decision Records
+│   ├── sidecars/           # Sidecar documentation
+│   └── examples/           # Example projects
 ├── internal/
 │   ├── detector/           # Language detection
 │   │   ├── node.go        # Node.js detector
@@ -175,6 +251,7 @@ dockstart/
 │   │   ├── devcontainer.go
 │   │   ├── compose.go
 │   │   ├── dockerfile.go
+│   │   ├── logsidecar.go  # Fluent Bit generator
 │   │   └── templates/
 │   └── models/             # Data structures
 └── Dockerfile              # Multi-stage container build
