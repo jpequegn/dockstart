@@ -24,6 +24,14 @@ type Detection struct {
 	// LogFormat indicates the detected or inferred log format
 	// Values: "json", "text", "unknown"
 	LogFormat string
+
+	// QueueLibraries is a list of detected job queue/worker libraries
+	// (e.g., "bull", "bullmq" for Node.js, "celery" for Python)
+	QueueLibraries []string
+
+	// WorkerCommand is the detected or inferred command to start the worker
+	// (e.g., "npm run worker", "celery -A app worker")
+	WorkerCommand string
 }
 
 // Project represents a fully analyzed project with all its detections.
@@ -75,4 +83,26 @@ func (d *Detection) AddLoggingLibrary(library string) {
 // HasStructuredLogging returns true if any structured logging library was detected.
 func (d *Detection) HasStructuredLogging() bool {
 	return len(d.LoggingLibraries) > 0
+}
+
+// HasQueueLibrary checks if a specific queue library was detected.
+func (d *Detection) HasQueueLibrary(library string) bool {
+	for _, l := range d.QueueLibraries {
+		if l == library {
+			return true
+		}
+	}
+	return false
+}
+
+// AddQueueLibrary adds a queue library to the detection if not already present.
+func (d *Detection) AddQueueLibrary(library string) {
+	if !d.HasQueueLibrary(library) {
+		d.QueueLibraries = append(d.QueueLibraries, library)
+	}
+}
+
+// NeedsWorker returns true if any queue library was detected that requires a worker.
+func (d *Detection) NeedsWorker() bool {
+	return len(d.QueueLibraries) > 0
 }

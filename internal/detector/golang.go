@@ -47,6 +47,7 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 	}
 
 	loggingLibs, logFormat := d.detectLogging(mod)
+	queueLibs, workerCmd := d.detectQueue(mod)
 
 	detection := &models.Detection{
 		Language:         "go",
@@ -55,6 +56,8 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 		Confidence:       d.calculateConfidence(mod),
 		LoggingLibraries: loggingLibs,
 		LogFormat:        logFormat,
+		QueueLibraries:   queueLibs,
+		WorkerCommand:    workerCmd,
 	}
 
 	return detection, nil
@@ -277,4 +280,43 @@ func (d *GoDetector) GetVSCodeExtensions() []string {
 	return []string{
 		"golang.go",
 	}
+}
+
+// detectQueue identifies job queue/worker libraries from Go dependencies.
+// Returns the list of detected libraries and the inferred worker command.
+func (d *GoDetector) detectQueue(mod *goMod) ([]string, string) {
+	var libraries []string
+	workerCmd := ""
+
+	// Queue libraries that require a worker process
+	queuePatterns := map[string]string{
+		"github.com/hibiken/asynq":           "asynq",
+		"github.com/RichardKnop/machinery":   "machinery",
+		"github.com/gocraft/work":            "gocraft-work",
+		"github.com/adjust/rmq":              "rmq",
+		"github.com/gocelery/gocelery":       "gocelery",
+	}
+
+	for _, req := range mod.Requires {
+		for pattern, name := range queuePatterns {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+	}
+
+	// If queue libraries detected, set default worker command
+	// Go workers typically use the same binary with a flag or subcommand
+	if len(libraries) > 0 {
+		// Extract binary name from module path
+		binaryName := "app"
+		if mod.Module != "" {
+			parts := strings.Split(mod.Module, "/")
+			binaryName = parts[len(parts)-1]
+		}
+		workerCmd = "./" + binaryName + " worker"
+	}
+
+	return libraries, workerCmd
 }
