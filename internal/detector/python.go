@@ -281,11 +281,15 @@ func (d *PythonDetector) detectLogging(deps []string) ([]string, string) {
 		"pythonjsonlogger":    "python-json-logger",
 	}
 
+	// Structured JSON loggers
+	jsonStructuredLoggers := map[string]string{
+		"eliot":               "eliot",
+	}
+
 	// Logging libraries that typically output text by default
 	textLoggers := map[string]string{
 		"loguru":              "loguru",
 		"logbook":             "logbook",
-		"eliot":               "eliot",
 		"twiggy":              "twiggy",
 	}
 
@@ -300,6 +304,15 @@ func (d *PythonDetector) detectLogging(deps []string) ([]string, string) {
 
 		// Check JSON loggers first
 		for pkg, name := range jsonLoggers {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				logFormat = "json"
+				break
+			}
+		}
+
+		// Check structured JSON loggers
+		for pkg, name := range jsonStructuredLoggers {
 			if depLower == pkg {
 				libraries = append(libraries, name)
 				logFormat = "json"

@@ -473,6 +473,408 @@ fastapi>=0.100.0
 	}
 }
 
+// TestLoggingDetection_Node_EdgeCases tests additional edge cases for Node.js.
+func TestLoggingDetection_Node_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		packageJSON   string
+		wantLibraries []string
+		wantLogFormat string
+	}{
+		{
+			name: "pino with pino-pretty transport",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {
+					"pino": "^8.0.0",
+					"pino-pretty": "^9.0.0"
+				}
+			}`,
+			wantLibraries: []string{"pino"},
+			wantLogFormat: "json",
+		},
+		{
+			name: "winston only in devDependencies",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"express": "^4.18.0"},
+				"devDependencies": {"winston": "^3.0.0"}
+			}`,
+			wantLibraries: []string{"winston"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "log4js configurable logger",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"log4js": "^6.0.0"}
+			}`,
+			wantLibraries: []string{"log4js"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "roarr JSON logger",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"roarr": "^7.0.0"}
+			}`,
+			wantLibraries: []string{"roarr"},
+			wantLogFormat: "json",
+		},
+		{
+			name: "express-winston request logger",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {
+					"express": "^4.18.0",
+					"express-winston": "^4.0.0",
+					"winston": "^3.0.0"
+				}
+			}`,
+			wantLibraries: []string{"winston", "express-winston"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "signale logger",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"signale": "^1.4.0"}
+			}`,
+			wantLibraries: []string{"signale"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "loglevel logger",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"loglevel": "^1.8.0"}
+			}`,
+			wantLibraries: []string{"loglevel"},
+			wantLogFormat: "text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "dockstart-logging-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte(tt.packageJSON), 0644); err != nil {
+				t.Fatalf("Failed to write package.json: %v", err)
+			}
+
+			d := NewNodeDetector()
+			detection, err := d.Detect(tmpDir)
+			if err != nil {
+				t.Fatalf("Detection failed: %v", err)
+			}
+			if detection == nil {
+				t.Fatal("Expected detection, got nil")
+			}
+
+			if detection.LogFormat != tt.wantLogFormat {
+				t.Errorf("LogFormat = %q, want %q", detection.LogFormat, tt.wantLogFormat)
+			}
+
+			for _, wantLib := range tt.wantLibraries {
+				if !detection.HasLoggingLibrary(wantLib) {
+					t.Errorf("Expected library %q not found in %v", wantLib, detection.LoggingLibraries)
+				}
+			}
+		})
+	}
+}
+
+// TestLoggingDetection_Go_EdgeCases tests additional edge cases for Go.
+func TestLoggingDetection_Go_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		goMod         string
+		wantLibraries []string
+		wantLogFormat string
+	}{
+		{
+			name: "slog standard library",
+			goMod: `
+module test-app
+go 1.21
+
+require log/slog v0.0.0
+`,
+			wantLibraries: []string{"slog"},
+			wantLogFormat: "json",
+		},
+		{
+			name: "slog experimental",
+			goMod: `
+module test-app
+go 1.20
+
+require golang.org/x/exp/slog v0.0.0-20231006140011-7918f672742d
+`,
+			wantLibraries: []string{"slog"},
+			wantLogFormat: "json",
+		},
+		{
+			name: "apex log",
+			goMod: `
+module test-app
+go 1.21
+
+require github.com/apex/log v1.9.0
+`,
+			wantLibraries: []string{"apex-log"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "hashicorp hclog",
+			goMod: `
+module test-app
+go 1.21
+
+require github.com/hashicorp/go-hclog v1.6.0
+`,
+			wantLibraries: []string{"hclog"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "go-kit log",
+			goMod: `
+module test-app
+go 1.21
+
+require github.com/go-kit/log v0.2.1
+`,
+			wantLibraries: []string{"go-kit-log"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "log15",
+			goMod: `
+module test-app
+go 1.21
+
+require github.com/inconshreveable/log15 v2.16.0+incompatible
+`,
+			wantLibraries: []string{"log15"},
+			wantLogFormat: "text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "dockstart-logging-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(tt.goMod), 0644); err != nil {
+				t.Fatalf("Failed to write go.mod: %v", err)
+			}
+
+			d := NewGoDetector()
+			detection, err := d.Detect(tmpDir)
+			if err != nil {
+				t.Fatalf("Detection failed: %v", err)
+			}
+			if detection == nil {
+				t.Fatal("Expected detection, got nil")
+			}
+
+			if detection.LogFormat != tt.wantLogFormat {
+				t.Errorf("LogFormat = %q, want %q", detection.LogFormat, tt.wantLogFormat)
+			}
+
+			for _, wantLib := range tt.wantLibraries {
+				if !detection.HasLoggingLibrary(wantLib) {
+					t.Errorf("Expected library %q not found in %v", wantLib, detection.LoggingLibraries)
+				}
+			}
+		})
+	}
+}
+
+// TestLoggingDetection_Python_EdgeCases tests additional edge cases for Python.
+func TestLoggingDetection_Python_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		pyproject     string
+		wantLibraries []string
+		wantLogFormat string
+	}{
+		{
+			name: "logbook text logger",
+			pyproject: `
+[project]
+name = "test-app"
+dependencies = ["logbook>=1.6.0"]
+`,
+			wantLibraries: []string{"logbook"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "eliot structured logger",
+			pyproject: `
+[project]
+name = "test-app"
+dependencies = ["eliot>=1.14.0"]
+`,
+			wantLibraries: []string{"eliot"},
+			wantLogFormat: "json",
+		},
+		{
+			name: "multiple Python loggers",
+			pyproject: `
+[project]
+name = "test-app"
+dependencies = ["structlog>=23.0.0", "loguru>=0.7.0", "rich>=13.0.0"]
+`,
+			wantLibraries: []string{"structlog", "loguru", "rich"},
+			wantLogFormat: "json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "dockstart-logging-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			if err := os.WriteFile(filepath.Join(tmpDir, "pyproject.toml"), []byte(tt.pyproject), 0644); err != nil {
+				t.Fatalf("Failed to write pyproject.toml: %v", err)
+			}
+
+			d := NewPythonDetector()
+			detection, err := d.Detect(tmpDir)
+			if err != nil {
+				t.Fatalf("Detection failed: %v", err)
+			}
+			if detection == nil {
+				t.Fatal("Expected detection, got nil")
+			}
+
+			if detection.LogFormat != tt.wantLogFormat {
+				t.Errorf("LogFormat = %q, want %q", detection.LogFormat, tt.wantLogFormat)
+			}
+
+			for _, wantLib := range tt.wantLibraries {
+				if !detection.HasLoggingLibrary(wantLib) {
+					t.Errorf("Expected library %q not found in %v", wantLib, detection.LoggingLibraries)
+				}
+			}
+		})
+	}
+}
+
+// TestLoggingDetection_Rust_EdgeCases tests additional edge cases for Rust.
+func TestLoggingDetection_Rust_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		cargoToml     string
+		wantLibraries []string
+		wantLogFormat string
+	}{
+		{
+			name: "slog crate",
+			cargoToml: `
+[package]
+name = "test-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+slog = "2.7"
+slog-json = "2.6"
+`,
+			wantLibraries: []string{"slog"},
+			wantLogFormat: "json",
+		},
+		{
+			name: "fern logger",
+			cargoToml: `
+[package]
+name = "test-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fern = "0.6"
+log = "0.4"
+`,
+			wantLibraries: []string{"fern", "log"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "flexi_logger",
+			cargoToml: `
+[package]
+name = "test-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+flexi_logger = "0.27"
+`,
+			wantLibraries: []string{"flexi_logger"},
+			wantLogFormat: "text",
+		},
+		{
+			name: "pretty_env_logger",
+			cargoToml: `
+[package]
+name = "test-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+pretty_env_logger = "0.5"
+log = "0.4"
+`,
+			wantLibraries: []string{"pretty_env_logger", "log"},
+			wantLogFormat: "text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "dockstart-logging-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			if err := os.WriteFile(filepath.Join(tmpDir, "Cargo.toml"), []byte(tt.cargoToml), 0644); err != nil {
+				t.Fatalf("Failed to write Cargo.toml: %v", err)
+			}
+
+			d := NewRustDetector()
+			detection, err := d.Detect(tmpDir)
+			if err != nil {
+				t.Fatalf("Detection failed: %v", err)
+			}
+			if detection == nil {
+				t.Fatal("Expected detection, got nil")
+			}
+
+			if detection.LogFormat != tt.wantLogFormat {
+				t.Errorf("LogFormat = %q, want %q", detection.LogFormat, tt.wantLogFormat)
+			}
+
+			for _, wantLib := range tt.wantLibraries {
+				if !detection.HasLoggingLibrary(wantLib) {
+					t.Errorf("Expected library %q not found in %v", wantLib, detection.LoggingLibraries)
+				}
+			}
+		})
+	}
+}
+
 // TestHasStructuredLogging tests the HasStructuredLogging helper method
 func TestHasStructuredLogging(t *testing.T) {
 	tests := []struct {
