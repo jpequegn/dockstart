@@ -197,6 +197,38 @@ docker compose logs -f
 
 See [docs/sidecars/log-aggregator.md](docs/sidecars/log-aggregator.md) for detailed documentation.
 
+## Background Worker Sidecar (Planned)
+
+When dockstart detects background job processing frameworks, it will generate worker sidecar containers using the **same-image-different-command** pattern.
+
+### Detected Worker Frameworks
+
+| Language | Frameworks |
+|----------|------------|
+| Node.js | Bull, BullMQ, Agenda |
+| Python | Celery, Dramatiq, RQ |
+| Go | Asynq, Machinery |
+| Ruby | Sidekiq, Resque |
+
+### How It Works
+
+Workers use the same Docker image as your app but with a different command:
+
+```yaml
+services:
+  app:
+    build: ...
+    command: npm start      # Main application
+
+  worker:
+    build: ...
+    command: npm run worker # Background worker
+    depends_on:
+      - redis
+```
+
+See [docs/sidecars/background-worker.md](docs/sidecars/background-worker.md) for detailed documentation.
+
 ## Generated Files
 
 ### devcontainer.json
