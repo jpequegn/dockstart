@@ -81,8 +81,8 @@ func (g *DevcontainerGenerator) buildConfig(detection *models.Detection, project
 		RemoteUser: "root", // Default, will be overridden per language
 	}
 
-	// Determine if we need docker-compose (when services are detected)
-	config.UseCompose = len(detection.Services) > 0
+	// Determine if we need docker-compose (when services or log sidecar detected)
+	config.UseCompose = len(detection.Services) > 0 || detection.HasStructuredLogging()
 
 	// Language-specific configuration
 	switch detection.Language {
@@ -136,6 +136,11 @@ func (g *DevcontainerGenerator) buildConfig(detection *models.Detection, project
 		case "redis":
 			config.ForwardPorts = append(config.ForwardPorts, 6379)
 		}
+	}
+
+	// Add Fluent Bit port if logging is detected
+	if detection.HasStructuredLogging() {
+		config.ForwardPorts = append(config.ForwardPorts, 24224)
 	}
 
 	return config

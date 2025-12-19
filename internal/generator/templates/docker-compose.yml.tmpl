@@ -10,11 +10,16 @@ services:
     volumes:
       - ..:/workspace:cached
     command: sleep infinity
-{{- if .Services}}
+{{- if or .Services .LogSidecar.Enabled}}
     depends_on:
 {{- range .Services}}
       - {{.Name}}
 {{- end}}
+{{- if .LogSidecar.Enabled}}
+      - fluent-bit
+{{- end}}
+{{- end}}
+{{- if or .Services .LogSidecar.Enabled}}
     environment:
 {{- range .Services}}
 {{- if eq .Name "postgres"}}
@@ -24,6 +29,17 @@ services:
       - REDIS_URL=redis://redis:6379
 {{- end}}
 {{- end}}
+{{- if .LogSidecar.Enabled}}
+      - LOG_LEVEL=debug
+{{- end}}
+{{- end}}
+{{- if .LogSidecar.Enabled}}
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: app.{{.Name}}
+        fluentd-async: "true"
 {{- end}}
 {{range .Services}}
 
@@ -50,7 +66,20 @@ services:
       - "6379:6379"
 {{- end}}
 {{- end}}
-{{- if .Services}}
+{{- if .LogSidecar.Enabled}}
+
+  # Log aggregator sidecar (Fluent Bit)
+  # Collects logs from app container via Docker logging driver
+  fluent-bit:
+    image: fluent/fluent-bit:latest
+    restart: unless-stopped
+    volumes:
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+{{- end}}
+{{- if or .Services .LogSidecar.Enabled}}
 
 volumes:
 {{- range .Services}}
@@ -60,5 +89,8 @@ volumes:
 {{- if eq .Name "redis"}}
   redis-data:
 {{- end}}
+{{- end}}
+{{- if .LogSidecar.Enabled}}
+  fluent-bit-logs:
 {{- end}}
 {{- end}}
