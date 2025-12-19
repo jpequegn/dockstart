@@ -15,6 +15,18 @@ type ServiceConfig struct {
 	Name string
 }
 
+// LogSidecarComposeConfig holds configuration for the log aggregator sidecar.
+type LogSidecarComposeConfig struct {
+	// Enabled indicates whether to include the log sidecar
+	Enabled bool
+
+	// LogFormat is the detected log format ("json", "text", "unknown")
+	LogFormat string
+
+	// LoggingLibraries is the list of detected logging libraries
+	LoggingLibraries []string
+}
+
 // ComposeConfig holds the configuration for generating docker-compose.yml.
 type ComposeConfig struct {
 	// Name is the project name (used for database names, etc.)
@@ -22,6 +34,9 @@ type ComposeConfig struct {
 
 	// Services is a list of additional services to include
 	Services []ServiceConfig
+
+	// LogSidecar holds configuration for the log aggregator sidecar
+	LogSidecar LogSidecarComposeConfig
 }
 
 // ComposeGenerator generates docker-compose.yml files.
@@ -77,6 +92,15 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 		config.Services = append(config.Services, ServiceConfig{
 			Name: service,
 		})
+	}
+
+	// Configure log sidecar if structured logging is detected
+	if detection.HasStructuredLogging() {
+		config.LogSidecar = LogSidecarComposeConfig{
+			Enabled:          true,
+			LogFormat:        detection.LogFormat,
+			LoggingLibraries: detection.LoggingLibraries,
+		}
 	}
 
 	return config
