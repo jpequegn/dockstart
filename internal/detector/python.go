@@ -90,6 +90,7 @@ func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, er
 	}
 
 	loggingLibs, logFormat := d.detectLogging(deps)
+	queueLibs, workerCmd := d.detectQueue(deps, config.Project.Name, config.Tool.Poetry.Name)
 
 	detection := &models.Detection{
 		Language:         "python",
@@ -98,6 +99,8 @@ func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, er
 		Confidence:       d.calculateConfidencePyproject(config),
 		LoggingLibraries: loggingLibs,
 		LogFormat:        logFormat,
+		QueueLibraries:   queueLibs,
+		WorkerCommand:    workerCmd,
 	}
 
 	return detection, nil
@@ -145,6 +148,7 @@ func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection,
 	}
 
 	loggingLibs, logFormat := d.detectLogging(deps)
+	queueLibs, workerCmd := d.detectQueue(deps, "", "")
 
 	detection := &models.Detection{
 		Language:         "python",
@@ -153,6 +157,8 @@ func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection,
 		Confidence:       0.6, // Lower confidence without pyproject.toml
 		LoggingLibraries: loggingLibs,
 		LogFormat:        logFormat,
+		QueueLibraries:   queueLibs,
+		WorkerCommand:    workerCmd,
 	}
 
 	return detection, nil
@@ -341,4 +347,70 @@ func (d *PythonDetector) detectLogging(deps []string) ([]string, string) {
 	}
 
 	return libraries, logFormat
+}
+
+// detectQueue identifies job queue/worker libraries from Python dependencies.
+// Returns the list of detected libraries and the inferred worker command.
+func (d *PythonDetector) detectQueue(deps []string, projectName, poetryName string) ([]string, string) {
+	var libraries []string
+	workerCmd := ""
+
+	// Queue libraries that require a worker process
+	queuePackages := map[string]string{
+		"celery":   "celery",
+		"rq":       "rq",
+		"dramatiq": "dramatiq",
+		"huey":     "huey",
+		"arq":      "arq",
+		"taskiq":   "taskiq",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		for pkg, name := range queuePackages {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+	}
+
+	// If queue libraries detected, set appropriate worker command
+	if len(libraries) > 0 {
+		// Determine app name for worker command
+		appName := "app"
+		if projectName != "" {
+			appName = projectName
+		} else if poetryName != "" {
+			appName = poetryName
+		}
+
+		// Set worker command based on detected library
+		// Priority: celery > dramatiq > rq > huey > arq > taskiq
+		for _, lib := range libraries {
+			switch lib {
+			case "celery":
+				workerCmd = "celery -A " + appName + " worker"
+				return libraries, workerCmd
+			case "dramatiq":
+				workerCmd = "dramatiq " + appName
+				return libraries, workerCmd
+			case "rq":
+				workerCmd = "rq worker"
+				return libraries, workerCmd
+			case "huey":
+				workerCmd = "huey_consumer " + appName + ".huey"
+				return libraries, workerCmd
+			case "arq":
+				workerCmd = "arq " + appName + ".WorkerSettings"
+				return libraries, workerCmd
+			case "taskiq":
+				workerCmd = "taskiq worker " + appName + ":broker"
+				return libraries, workerCmd
+			}
+		}
+	}
+
+	return libraries, workerCmd
 }

@@ -55,6 +55,7 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 	deps := d.collectDependencies(config)
 
 	loggingLibs, logFormat := d.detectLogging(deps)
+	queueLibs, workerCmd := d.detectQueue(deps, config.Package.Name)
 
 	detection := &models.Detection{
 		Language:         "rust",
@@ -63,6 +64,8 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 		Confidence:       d.calculateConfidence(config),
 		LoggingLibraries: loggingLibs,
 		LogFormat:        logFormat,
+		QueueLibraries:   queueLibs,
+		WorkerCommand:    workerCmd,
 	}
 
 	return detection, nil
@@ -253,4 +256,44 @@ func (d *RustDetector) detectLogging(deps []string) ([]string, string) {
 	}
 
 	return libraries, logFormat
+}
+
+// detectQueue identifies job queue/worker libraries from Rust dependencies.
+// Returns the list of detected libraries and the inferred worker command.
+func (d *RustDetector) detectQueue(deps []string, packageName string) ([]string, string) {
+	var libraries []string
+	workerCmd := ""
+
+	// Queue libraries that require a worker process
+	queuePackages := map[string]string{
+		"sidekiq":    "sidekiq",
+		"celery":     "celery",
+		"lapin":      "lapin",
+		"apalis":     "apalis",
+		"faktory":    "faktory",
+		"background": "background-jobs",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		for pkg, name := range queuePackages {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+	}
+
+	// If queue libraries detected, set appropriate worker command
+	if len(libraries) > 0 {
+		// Rust workers typically use the same binary with a subcommand or flag
+		binaryName := "app"
+		if packageName != "" {
+			binaryName = packageName
+		}
+		workerCmd = "./" + binaryName + " worker"
+	}
+
+	return libraries, workerCmd
 }
