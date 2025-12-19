@@ -30,6 +30,7 @@ type packageJSON struct {
 	Engines         engines           `json:"engines"`
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
+	Scripts         map[string]string `json:"scripts"`
 }
 
 type engines struct {
@@ -58,6 +59,7 @@ func (d *NodeDetector) Detect(path string) (*models.Detection, error) {
 	}
 
 	loggingLibs, logFormat := d.detectLogging(pkg)
+	queueLibs, workerCmd := d.detectQueue(pkg)
 
 	detection := &models.Detection{
 		Language:         "node",
@@ -66,6 +68,8 @@ func (d *NodeDetector) Detect(path string) (*models.Detection, error) {
 		Confidence:       d.calculateConfidence(pkg),
 		LoggingLibraries: loggingLibs,
 		LogFormat:        logFormat,
+		QueueLibraries:   queueLibs,
+		WorkerCommand:    workerCmd,
 	}
 
 	return detection, nil
@@ -258,4 +262,75 @@ func (d *NodeDetector) GetVSCodeExtensions(pkg packageJSON) []string {
 	}
 
 	return extensions
+}
+
+// detectQueue identifies job queue/worker libraries from dependencies.
+// Returns the list of detected libraries and the inferred worker command.
+func (d *NodeDetector) detectQueue(pkg packageJSON) ([]string, string) {
+	var libraries []string
+	workerCmd := ""
+
+	// Merge all dependencies for checking
+	allDeps := make(map[string]string)
+	for k, v := range pkg.Dependencies {
+		allDeps[k] = v
+	}
+	for k, v := range pkg.DevDependencies {
+		allDeps[k] = v
+	}
+
+	// Queue libraries that require a worker process
+	queueLibraries := map[string]string{
+		"bull":      "bull",
+		"bullmq":    "bullmq",
+		"bee-queue": "bee-queue",
+		"agenda":    "agenda",
+		"kue":       "kue",
+		"pg-boss":   "pg-boss",
+	}
+
+	// Check for queue libraries
+	for dep, name := range queueLibraries {
+		if _, exists := allDeps[dep]; exists {
+			libraries = append(libraries, name)
+		}
+	}
+
+	// If queue libraries detected, look for worker command
+	if len(libraries) > 0 {
+		workerCmd = d.findWorkerCommand(pkg)
+	}
+
+	return libraries, workerCmd
+}
+
+// findWorkerCommand attempts to find the worker entry command from package.json scripts.
+func (d *NodeDetector) findWorkerCommand(pkg packageJSON) string {
+	// Priority order for worker script detection
+	workerScripts := []string{
+		"worker",
+		"start:worker",
+		"worker:start",
+		"queue",
+		"start:queue",
+		"queue:start",
+		"process",
+		"jobs",
+	}
+
+	for _, script := range workerScripts {
+		if _, exists := pkg.Scripts[script]; exists {
+			return "npm run " + script
+		}
+	}
+
+	// Check for any script containing "worker" or "queue"
+	for name := range pkg.Scripts {
+		if strings.Contains(strings.ToLower(name), "worker") {
+			return "npm run " + name
+		}
+	}
+
+	// Default fallback - assume worker.js exists
+	return "node worker.js"
 }
