@@ -39,6 +39,33 @@ type WorkerSidecarConfig struct {
 	QueueLibraries []string
 }
 
+// BackupSidecarComposeConfig holds configuration for the backup sidecar.
+type BackupSidecarComposeConfig struct {
+	// Enabled indicates whether to include the backup sidecar
+	Enabled bool
+
+	// Schedule is the cron schedule for backups
+	Schedule string
+
+	// RetentionDays is the number of days to keep backups
+	RetentionDays int
+
+	// HasPostgres indicates if PostgreSQL backup is needed
+	HasPostgres bool
+
+	// HasMySQL indicates if MySQL backup is needed
+	HasMySQL bool
+
+	// HasRedis indicates if Redis backup is needed
+	HasRedis bool
+
+	// HasSQLite indicates if SQLite backup is needed
+	HasSQLite bool
+
+	// NeedsDockerSocket indicates if docker socket access is required
+	NeedsDockerSocket bool
+}
+
 // ComposeConfig holds the configuration for generating docker-compose.yml.
 type ComposeConfig struct {
 	// Name is the project name (used for database names, etc.)
@@ -52,6 +79,9 @@ type ComposeConfig struct {
 
 	// WorkerSidecar holds configuration for the background worker sidecar
 	WorkerSidecar WorkerSidecarConfig
+
+	// BackupSidecar holds configuration for the database backup sidecar
+	BackupSidecar BackupSidecarComposeConfig
 }
 
 // ComposeGenerator generates docker-compose.yml files.
@@ -132,6 +162,24 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 			config.Services = append(config.Services, ServiceConfig{
 				Name: "redis",
 			})
+		}
+	}
+
+	// Configure backup sidecar if any database services are detected
+	hasPostgres := hasService(config.Services, "postgres")
+	hasMySQL := hasService(config.Services, "mysql")
+	hasRedis := hasService(config.Services, "redis")
+
+	if hasPostgres || hasMySQL || hasRedis {
+		config.BackupSidecar = BackupSidecarComposeConfig{
+			Enabled:           true,
+			Schedule:          "0 3 * * *", // Daily at 3 AM
+			RetentionDays:     7,
+			HasPostgres:       hasPostgres,
+			HasMySQL:          hasMySQL,
+			HasRedis:          hasRedis,
+			HasSQLite:         false, // SQLite detection not implemented yet
+			NeedsDockerSocket: hasRedis, // Redis backup uses docker cp
 		}
 	}
 
