@@ -130,4 +130,45 @@ volumes:
 {{- if .LogSidecar.Enabled}}
   fluent-bit-logs:
 {{- end}}
+{{- if .BackupSidecar.Enabled}}
+  backups:
+{{- end}}
+{{- end}}
+{{- if .BackupSidecar.Enabled}}
+
+  # Database backup sidecar
+  # Runs scheduled backups using Supercronic
+  db-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    volumes:
+      - ./backups:/backup
+{{- if .BackupSidecar.NeedsDockerSocket}}
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+{{- end}}
+    depends_on:
+{{- range .Services}}
+      - {{.Name}}
+{{- end}}
+    environment:
+      - BACKUP_DIR=/backup
+      - RETENTION_DAYS={{.BackupSidecar.RetentionDays}}
+{{- if .BackupSidecar.HasPostgres}}
+      - DB_HOST=postgres
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME={{$.Name}}_dev
+{{- end}}
+{{- if .BackupSidecar.HasMySQL}}
+      - DB_HOST=mysql
+      - DB_USER=root
+      - DB_PASSWORD=mysql
+      - DB_NAME={{$.Name}}_dev
+{{- end}}
+{{- if .BackupSidecar.HasRedis}}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+{{- end}}
+    restart: unless-stopped
 {{- end}}
