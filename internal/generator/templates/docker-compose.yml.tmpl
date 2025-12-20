@@ -41,6 +41,43 @@ services:
         tag: app.{{.Name}}
         fluentd-async: "true"
 {{- end}}
+{{- if .WorkerSidecar.Enabled}}
+
+  # Background worker process
+  # Uses same Dockerfile as app but with different command
+  worker:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+    command: {{.WorkerSidecar.Command}}
+    depends_on:
+      - app
+{{- range .Services}}
+      - {{.Name}}
+{{- end}}
+    environment:
+      - WORKER_CONCURRENCY=2
+      - NODE_ENV=development
+{{- range .Services}}
+{{- if eq .Name "postgres"}}
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/{{$.Name}}_dev
+{{- end}}
+{{- if eq .Name "redis"}}
+      - REDIS_URL=redis://redis:6379
+{{- end}}
+{{- end}}
+    restart: unless-stopped
+{{- if $.LogSidecar.Enabled}}
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: worker.{{$.Name}}
+        fluentd-async: "true"
+{{- end}}
+{{- end}}
 {{range .Services}}
 
   # {{.Name}} service

@@ -27,6 +27,18 @@ type LogSidecarComposeConfig struct {
 	LoggingLibraries []string
 }
 
+// WorkerSidecarConfig holds configuration for the background worker sidecar.
+type WorkerSidecarConfig struct {
+	// Enabled indicates whether to include the worker sidecar
+	Enabled bool
+
+	// Command is the command to start the worker process
+	Command string
+
+	// QueueLibraries is the list of detected queue libraries
+	QueueLibraries []string
+}
+
 // ComposeConfig holds the configuration for generating docker-compose.yml.
 type ComposeConfig struct {
 	// Name is the project name (used for database names, etc.)
@@ -37,6 +49,9 @@ type ComposeConfig struct {
 
 	// LogSidecar holds configuration for the log aggregator sidecar
 	LogSidecar LogSidecarComposeConfig
+
+	// WorkerSidecar holds configuration for the background worker sidecar
+	WorkerSidecar WorkerSidecarConfig
 }
 
 // ComposeGenerator generates docker-compose.yml files.
@@ -100,6 +115,15 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 			Enabled:          true,
 			LogFormat:        detection.LogFormat,
 			LoggingLibraries: detection.LoggingLibraries,
+		}
+	}
+
+	// Configure worker sidecar if queue libraries are detected
+	if detection.NeedsWorker() {
+		config.WorkerSidecar = WorkerSidecarConfig{
+			Enabled:        true,
+			Command:        detection.WorkerCommand,
+			QueueLibraries: detection.QueueLibraries,
 		}
 	}
 
