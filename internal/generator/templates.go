@@ -9,7 +9,7 @@ import (
 // templates embeds all template files at compile time.
 // This means the templates are included in the binary - no external files needed.
 //
-//go:embed templates/*.tmpl
+//go:embed templates/*.tmpl templates/processor/*.tmpl
 var templatesFS embed.FS
 
 // loadTemplate loads and parses a template from the embedded filesystem.
