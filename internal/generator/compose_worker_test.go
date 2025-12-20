@@ -1,9 +1,12 @@
 package generator
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jpequegn/dockstart/internal/detector"
 	"github.com/jpequegn/dockstart/internal/models"
 	"gopkg.in/yaml.v3"
 )
@@ -507,5 +510,207 @@ func TestWorkerSidecar_RedisAutoAddWithEnvVars(t *testing.T) {
 	// Check that REDIS_URL is set in worker environment
 	if !strings.Contains(contentStr, "REDIS_URL=redis://redis:6379") {
 		t.Error("Expected REDIS_URL environment variable to be set")
+	}
+}
+
+// TestWorkerSidecar_Integration tests the full detection → generation flow.
+func TestWorkerSidecar_Integration(t *testing.T) {
+	tests := []struct {
+		name           string
+		files          map[string]string // filename -> content
+		projectName    string
+		wantWorker     bool
+		wantRedis      bool
+		wantWorkerCmd  string
+	}{
+		{
+			name: "node bullmq with worker script",
+			files: map[string]string{
+				"package.json": `{
+					"name": "my-app",
+					"dependencies": {
+						"bullmq": "^4.0.0",
+						"express": "^4.18.0",
+						"ioredis": "^5.0.0"
+					},
+					"scripts": {
+						"start": "node src/index.js",
+						"worker": "node src/worker.js"
+					}
+				}`,
+			},
+			projectName:   "my-app",
+			wantWorker:    true,
+			wantRedis:     true,
+			wantWorkerCmd: "npm run worker",
+		},
+		{
+			name: "python celery project",
+			files: map[string]string{
+				"pyproject.toml": `[project]
+name = "celery-app"
+dependencies = ["celery>=5.0.0", "redis>=4.0.0"]
+`,
+			},
+			projectName:   "celery-app",
+			wantWorker:    true,
+			wantRedis:     false, // celery uses various brokers, not auto-added
+			wantWorkerCmd: "celery -A celery-app worker",
+		},
+		{
+			name: "go asynq project",
+			files: map[string]string{
+				"go.mod": `module github.com/user/taskservice
+
+go 1.21
+
+require github.com/hibiken/asynq v0.24.0
+`,
+			},
+			projectName:   "taskservice",
+			wantWorker:    true,
+			wantRedis:     true,
+			wantWorkerCmd: "./taskservice worker",
+		},
+		{
+			name: "node express without queue",
+			files: map[string]string{
+				"package.json": `{
+					"name": "simple-api",
+					"dependencies": {
+						"express": "^4.18.0"
+					}
+				}`,
+			},
+			projectName: "simple-api",
+			wantWorker:  false,
+			wantRedis:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temp directory with project files
+			tmpDir, err := os.MkdirTemp("", "dockstart-integration-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			// Write project files
+			for filename, content := range tt.files {
+				if err := os.WriteFile(filepath.Join(tmpDir, filename), []byte(content), 0644); err != nil {
+					t.Fatalf("Failed to write %s: %v", filename, err)
+				}
+			}
+
+			// Run detection
+			var detection *models.Detection
+			detectors := []interface {
+				Detect(string) (*models.Detection, error)
+			}{
+				detector.NewNodeDetector(),
+				detector.NewPythonDetector(),
+				detector.NewGoDetector(),
+				detector.NewRustDetector(),
+			}
+
+			for _, d := range detectors {
+				det, err := d.Detect(tmpDir)
+				if err != nil {
+					t.Fatalf("Detection error: %v", err)
+				}
+				if det != nil {
+					detection = det
+					break
+				}
+			}
+
+			if detection == nil {
+				if tt.wantWorker {
+					t.Fatal("Expected detection but got nil")
+				}
+				return // No detection expected, test passes
+			}
+
+			// Run generation
+			g := NewComposeGenerator()
+			content, err := g.GenerateContent(detection, tt.projectName)
+			if err != nil {
+				t.Fatalf("GenerateContent failed: %v", err)
+			}
+
+			// Parse YAML
+			var parsed map[string]interface{}
+			if err := yaml.Unmarshal(content, &parsed); err != nil {
+				t.Fatalf("Invalid YAML: %v", err)
+			}
+
+			services := parsed["services"].(map[string]interface{})
+
+			// Check worker presence
+			_, hasWorker := services["worker"]
+			if tt.wantWorker && !hasWorker {
+				t.Error("Expected worker service, but not found")
+			}
+			if !tt.wantWorker && hasWorker {
+				t.Error("Expected no worker service, but found one")
+			}
+
+			// Check Redis presence
+			_, hasRedis := services["redis"]
+			if tt.wantRedis && !hasRedis {
+				t.Error("Expected Redis service, but not found")
+			}
+
+			// Check worker command if worker expected
+			if tt.wantWorker && tt.wantWorkerCmd != "" {
+				contentStr := string(content)
+				if !strings.Contains(contentStr, tt.wantWorkerCmd) {
+					t.Errorf("Expected worker command %q in output", tt.wantWorkerCmd)
+				}
+			}
+		})
+	}
+}
+
+// TestWorkerSidecar_MultipleQueueLibraries tests generation with multiple queue libs.
+func TestWorkerSidecar_MultipleQueueLibraries(t *testing.T) {
+	detection := &models.Detection{
+		Language:       "node",
+		Version:        "20",
+		Services:       []string{},
+		QueueLibraries: []string{"bull", "bullmq", "bee-queue"}, // Multiple libraries
+		WorkerCommand:  "npm run worker",
+	}
+
+	g := NewComposeGenerator()
+	content, err := g.GenerateContent(detection, "multi-queue-app")
+	if err != nil {
+		t.Fatalf("GenerateContent failed: %v", err)
+	}
+
+	// Parse as YAML
+	var parsed map[string]interface{}
+	if err := yaml.Unmarshal(content, &parsed); err != nil {
+		t.Fatalf("Failed to parse YAML: %v", err)
+	}
+
+	services := parsed["services"].(map[string]interface{})
+
+	// Should have exactly one worker service (not multiple)
+	workerCount := 0
+	for name := range services {
+		if name == "worker" {
+			workerCount++
+		}
+	}
+	if workerCount != 1 {
+		t.Errorf("Expected exactly 1 worker service, got %d", workerCount)
+	}
+
+	// Redis should be auto-added (all three are Redis-based)
+	if _, hasRedis := services["redis"]; !hasRedis {
+		t.Error("Expected Redis to be auto-added for Redis-based queue libraries")
 	}
 }
