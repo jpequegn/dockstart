@@ -295,6 +295,111 @@ docker compose restart worker
 
 See [docs/sidecars/background-worker.md](docs/sidecars/background-worker.md) for detailed documentation.
 
+## Database Backup Sidecar
+
+When dockstart detects a database service (PostgreSQL, MySQL, or Redis), it automatically generates a **backup sidecar** that creates scheduled backups of your development database.
+
+### How It Works
+
+The backup sidecar runs as a separate container that:
+- Creates automated backups on a schedule (default: daily at 3 AM)
+- Rotates old backups automatically (default: 7-day retention)
+- Uses the appropriate backup tool for each database type
+- Stores backups in the `.devcontainer/backups/` directory
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│     App     │     │  Database   │     │  db-backup  │
+│             │────▶│  (postgres, │◀────│  (alpine +  │
+│             │     │   mysql,    │     │ supercronic)│
+└─────────────┘     │   redis)    │     └──────┬──────┘
+                    └─────────────┘            │
+                                               ▼
+                                    ┌─────────────────┐
+                                    │   ./backups/    │
+                                    └─────────────────┘
+```
+
+### Supported Databases
+
+| Database | Backup Tool | Hot Backup |
+|----------|-------------|------------|
+| PostgreSQL | pg_dump | Yes |
+| MySQL | mysqldump | Yes |
+| Redis | redis-cli + docker cp | Yes |
+
+### Example with Backup
+
+```bash
+$ dockstart --dry-run ./my-api
+
+📂 Analyzing ./my-api...
+🔍 Detecting project configuration...
+   ✅ Detected: node 20 (confidence: 100%)
+   📦 Services: [postgres]
+   💾 Backup: enabled (daily at 3 AM)
+
+📝 Generating devcontainer.json...
+📝 Generating docker-compose.yml...
+📝 Generating Dockerfile...
+📝 Generating Dockerfile.backup...
+📝 Generating backup scripts...
+
+✨ Done!
+```
+
+### Generated Backup Configuration
+
+When a database is detected:
+
+```yaml
+services:
+  app:
+    # ... app configuration ...
+
+  postgres:
+    image: postgres:16-alpine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  db-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    volumes:
+      - ./backups:/backup
+    depends_on:
+      - postgres
+    environment:
+      - RETENTION_DAYS=7
+      - DB_HOST=postgres
+      - DB_NAME=myapp_dev
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  backups:
+```
+
+### Managing Backups
+
+```bash
+# View backup files
+ls -la .devcontainer/backups/
+
+# Trigger manual backup
+docker compose exec db-backup /usr/local/bin/backup.sh
+
+# View backup logs
+docker compose logs -f db-backup
+
+# Restore from backup (PostgreSQL)
+gunzip -c .devcontainer/backups/postgres-2025-12-20T03-00-00.sql.gz | \
+  docker compose exec -T postgres psql -U postgres -d myapp_dev
+```
+
+See [docs/sidecars/backup.md](docs/sidecars/backup.md) for detailed documentation.
+
 ## Generated Files
 
 ### devcontainer.json
@@ -309,6 +414,8 @@ See [docs/sidecars/background-worker.md](docs/sidecars/background-worker.md) for
 - PostgreSQL service with named volume
 - Redis service with named volume
 - Fluent Bit log aggregator sidecar (when logging libraries detected)
+- Worker sidecar (when queue libraries detected)
+- Database backup sidecar (when databases detected)
 - Environment variables for service URLs
 
 ### Dockerfile
@@ -350,6 +457,8 @@ dockstart/
 │   │   ├── compose.go
 │   │   ├── dockerfile.go
 │   │   ├── logsidecar.go  # Fluent Bit generator
+│   │   ├── backup.go      # Database backup scripts
+│   │   ├── backup_sidecar.go # Backup container generator
 │   │   └── templates/
 │   └── models/             # Data structures
 └── Dockerfile              # Multi-stage container build
