@@ -1,0 +1,22 @@
+{
+  "name": "worker-example",
+  "version": "1.0.0",
+  "description": "Example project demonstrating dockstart worker sidecar generation",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "worker": "node src/worker.js",
+    "dev": "nodemon src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "bullmq": "^5.0.0",
+    "express": "^4.18.0",
+    "ioredis": "^5.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}
