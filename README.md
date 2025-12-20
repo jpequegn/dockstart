@@ -9,6 +9,7 @@ A CLI tool that analyzes a project and generates Docker development environment 
 - **Language Detection**: Automatically detects Node.js, Go, Python, and Rust projects
 - **Service Detection**: Identifies PostgreSQL and Redis dependencies
 - **Log Aggregation**: Auto-configures Fluent Bit sidecar when structured logging libraries detected
+- **Background Workers**: Auto-generates worker sidecars when queue libraries detected (Bull, Celery, etc.)
 - **Complete Dev Environment**: Generates devcontainer.json, docker-compose.yml, and Dockerfile
 - **VS Code Ready**: Generated files work with VS Code's Dev Containers extension
 
@@ -197,34 +198,99 @@ docker compose logs -f
 
 See [docs/sidecars/log-aggregator.md](docs/sidecars/log-aggregator.md) for detailed documentation.
 
-## Background Worker Sidecar (Planned)
+## Background Worker Sidecar
 
-When dockstart detects background job processing frameworks, it will generate worker sidecar containers using the **same-image-different-command** pattern.
-
-### Detected Worker Frameworks
-
-| Language | Frameworks |
-|----------|------------|
-| Node.js | Bull, BullMQ, Agenda |
-| Python | Celery, Dramatiq, RQ |
-| Go | Asynq, Machinery |
-| Ruby | Sidekiq, Resque |
+When dockstart detects background job processing frameworks (Bull, Celery, etc.), it automatically generates a **worker sidecar** container using the same-image-different-command pattern.
 
 ### How It Works
 
-Workers use the same Docker image as your app but with a different command:
+The worker uses the **same Docker image** as your app but runs with a different command to process background jobs:
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  App Container  │     │ Worker Container│     │     Redis       │
+│   (npm start)   │────▶│(npm run worker) │◀───▶│  (message bus)  │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │                       │
+        │  Same image           │  Same image
+        │  Different command    │  Different command
+        └───────────────────────┘
+```
+
+### Detected Worker Frameworks
+
+| Language | Frameworks | Auto-adds Redis |
+|----------|------------|-----------------|
+| Node.js | bull, bullmq, bee-queue, agenda | Yes |
+| Python | celery, rq, dramatiq, huey, arq | rq, arq only |
+| Go | asynq, machinery, gocraft-work | asynq only |
+| Rust | sidekiq, apalis, faktory | sidekiq only |
+
+### Example with Worker
+
+```bash
+$ dockstart --dry-run ./my-node-api
+
+📂 Analyzing ./my-node-api...
+🔍 Detecting project configuration...
+   ✅ Detected: node 20 (confidence: 100%)
+   📦 Services: [redis]
+   👷 Worker: bullmq (command: npm run worker)
+
+📝 Generating devcontainer.json...
+📝 Generating docker-compose.yml...
+📝 Generating Dockerfile...
+
+✨ Done!
+```
+
+### Generated Worker Configuration
+
+When a worker framework is detected:
 
 ```yaml
 services:
   app:
-    build: ...
-    command: npm start      # Main application
-
-  worker:
-    build: ...
-    command: npm run worker # Background worker
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
     depends_on:
       - redis
+
+  worker:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+    command: npm run worker
+    depends_on:
+      - app
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - WORKER_CONCURRENCY=2
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+```
+
+### Scaling Workers
+
+```bash
+# Run 3 worker instances
+docker compose up -d --scale worker=3
+
+# View worker logs
+docker compose logs -f worker
+
+# Restart workers only
+docker compose restart worker
 ```
 
 See [docs/sidecars/background-worker.md](docs/sidecars/background-worker.md) for detailed documentation.
