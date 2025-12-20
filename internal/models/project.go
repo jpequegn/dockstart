@@ -106,3 +106,75 @@ func (d *Detection) AddQueueLibrary(library string) {
 func (d *Detection) NeedsWorker() bool {
 	return len(d.QueueLibraries) > 0
 }
+
+// BackupConfig represents the configuration for database backup sidecar.
+type BackupConfig struct {
+	// DatabaseType is the type of database (postgres, mysql, redis, sqlite)
+	DatabaseType string
+
+	// ContainerName is the name of the database container
+	ContainerName string
+
+	// DatabaseHost is the hostname of the database (usually container name)
+	DatabaseHost string
+
+	// DatabaseName is the name of the database to backup
+	DatabaseName string
+
+	// DatabaseUser is the database user for authentication
+	DatabaseUser string
+
+	// DatabasePassword is the database password for authentication
+	DatabasePassword string
+
+	// DatabasePath is the path to the database file (SQLite only)
+	DatabasePath string
+
+	// AppContainer is the app container name (SQLite only, for stopping)
+	AppContainer string
+
+	// Schedule is the cron schedule for backups (default: "0 3 * * *")
+	Schedule string
+
+	// RetentionDays is the number of days to keep backups (default: 7)
+	RetentionDays int
+
+	// CompressionLevel is the gzip compression level 1-9 (default: 6)
+	CompressionLevel int
+
+	// StopContainer indicates if container should be stopped for backup (SQLite)
+	StopContainer bool
+}
+
+// DefaultBackupConfig returns a BackupConfig with sensible defaults.
+func DefaultBackupConfig(dbType, containerName string) *BackupConfig {
+	return &BackupConfig{
+		DatabaseType:     dbType,
+		ContainerName:    containerName,
+		DatabaseHost:     containerName,
+		Schedule:         "0 3 * * *",
+		RetentionDays:    7,
+		CompressionLevel: 6,
+		StopContainer:    dbType == "sqlite",
+	}
+}
+
+// GetBackupExtension returns the file extension for the database type.
+func (b *BackupConfig) GetBackupExtension() string {
+	switch b.DatabaseType {
+	case "postgres", "mysql", "mariadb":
+		return "sql.gz"
+	case "redis":
+		return "rdb.gz"
+	case "sqlite":
+		return "db.gz"
+	default:
+		return "backup.gz"
+	}
+}
+
+// NeedsDockerSocket returns true if the backup requires Docker socket access.
+func (b *BackupConfig) NeedsDockerSocket() bool {
+	// Redis uses docker cp, SQLite may need to stop containers
+	return b.DatabaseType == "redis" || (b.DatabaseType == "sqlite" && b.StopContainer)
+}
