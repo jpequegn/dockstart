@@ -32,6 +32,14 @@ type Detection struct {
 	// WorkerCommand is the detected or inferred command to start the worker
 	// (e.g., "npm run worker", "celery -A app worker")
 	WorkerCommand string
+
+	// FileUploadLibraries is a list of detected file upload libraries
+	// (e.g., "multer", "formidable" for Node.js, "python-multipart" for Python)
+	FileUploadLibraries []string
+
+	// UploadPath is the detected upload directory path (e.g., "/uploads", "uploads/")
+	// Empty string if not detected
+	UploadPath string
 }
 
 // Project represents a fully analyzed project with all its detections.
@@ -105,6 +113,28 @@ func (d *Detection) AddQueueLibrary(library string) {
 // NeedsWorker returns true if any queue library was detected that requires a worker.
 func (d *Detection) NeedsWorker() bool {
 	return len(d.QueueLibraries) > 0
+}
+
+// HasFileUploadLibrary checks if a specific file upload library was detected.
+func (d *Detection) HasFileUploadLibrary(library string) bool {
+	for _, l := range d.FileUploadLibraries {
+		if l == library {
+			return true
+		}
+	}
+	return false
+}
+
+// AddFileUploadLibrary adds a file upload library to the detection if not already present.
+func (d *Detection) AddFileUploadLibrary(library string) {
+	if !d.HasFileUploadLibrary(library) {
+		d.FileUploadLibraries = append(d.FileUploadLibraries, library)
+	}
+}
+
+// NeedsFileProcessor returns true if any file upload library was detected.
+func (d *Detection) NeedsFileProcessor() bool {
+	return len(d.FileUploadLibraries) > 0
 }
 
 // BackupConfig represents the configuration for database backup sidecar.

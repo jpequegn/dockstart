@@ -48,16 +48,19 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 
 	loggingLibs, logFormat := d.detectLogging(mod)
 	queueLibs, workerCmd := d.detectQueue(mod)
+	uploadLibs, uploadPath := d.detectFileUpload(mod, path)
 
 	detection := &models.Detection{
-		Language:         "go",
-		Version:          mod.Version,
-		Services:         d.detectServices(mod),
-		Confidence:       d.calculateConfidence(mod),
-		LoggingLibraries: loggingLibs,
-		LogFormat:        logFormat,
-		QueueLibraries:   queueLibs,
-		WorkerCommand:    workerCmd,
+		Language:            "go",
+		Version:             mod.Version,
+		Services:            d.detectServices(mod),
+		Confidence:          d.calculateConfidence(mod),
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
 	}
 
 	return detection, nil
@@ -319,4 +322,80 @@ func (d *GoDetector) detectQueue(mod *goMod) ([]string, string) {
 	}
 
 	return libraries, workerCmd
+}
+
+// detectFileUpload identifies file upload handling from Go dependencies.
+// Returns the list of detected libraries and the inferred upload path.
+func (d *GoDetector) detectFileUpload(mod *goMod, projectPath string) ([]string, string) {
+	var libraries []string
+	uploadPath := ""
+
+	// File upload/multipart handling patterns
+	uploadPatterns := map[string]string{
+		"github.com/gin-contrib/static": "gin-static",
+		"github.com/h2non/filetype":     "filetype",
+		"github.com/gabriel-vasile/mimetype": "mimetype",
+	}
+
+	// Web frameworks that have built-in multipart support
+	webFrameworks := map[string]string{
+		"github.com/gin-gonic/gin":     "gin",
+		"github.com/labstack/echo":     "echo",
+		"github.com/gofiber/fiber":     "fiber",
+		"github.com/go-chi/chi":        "chi",
+		"github.com/gorilla/mux":       "gorilla",
+	}
+
+	hasWebFramework := false
+
+	for _, req := range mod.Requires {
+		// Check explicit upload libraries
+		for pattern, name := range uploadPatterns {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+
+		// Check for web frameworks (they all support multipart/form-data)
+		for pattern := range webFrameworks {
+			if strings.HasPrefix(req, pattern) {
+				hasWebFramework = true
+				break
+			}
+		}
+	}
+
+	// If we have a web framework, check for uploads directory as hint
+	if hasWebFramework || len(libraries) > 0 {
+		uploadPath = d.findUploadPath(projectPath)
+		// If uploads directory exists, mark as having file upload capability
+		if uploadPath != "" && len(libraries) == 0 {
+			libraries = append(libraries, "multipart")
+		}
+	}
+
+	return libraries, uploadPath
+}
+
+// findUploadPath attempts to find the upload directory for Go projects.
+func (d *GoDetector) findUploadPath(projectPath string) string {
+	// Common upload directory names
+	commonDirs := []string{
+		"uploads",
+		"upload",
+		"files",
+		"static/uploads",
+		"public/uploads",
+		"assets/uploads",
+	}
+
+	for _, dir := range commonDirs {
+		fullPath := filepath.Join(projectPath, dir)
+		if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+
+	return ""
 }
