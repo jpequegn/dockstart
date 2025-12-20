@@ -91,16 +91,19 @@ func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, er
 
 	loggingLibs, logFormat := d.detectLogging(deps)
 	queueLibs, workerCmd := d.detectQueue(deps, config.Project.Name, config.Tool.Poetry.Name)
+	uploadLibs, uploadPath := d.detectFileUpload(deps, filepath.Dir(path))
 
 	detection := &models.Detection{
-		Language:         "python",
-		Version:          d.extractVersion(config),
-		Services:         d.detectServicesFromDeps(deps),
-		Confidence:       d.calculateConfidencePyproject(config),
-		LoggingLibraries: loggingLibs,
-		LogFormat:        logFormat,
-		QueueLibraries:   queueLibs,
-		WorkerCommand:    workerCmd,
+		Language:            "python",
+		Version:             d.extractVersion(config),
+		Services:            d.detectServicesFromDeps(deps),
+		Confidence:          d.calculateConfidencePyproject(config),
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
 	}
 
 	return detection, nil
@@ -149,16 +152,19 @@ func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection,
 
 	loggingLibs, logFormat := d.detectLogging(deps)
 	queueLibs, workerCmd := d.detectQueue(deps, "", "")
+	uploadLibs, uploadPath := d.detectFileUpload(deps, filepath.Dir(path))
 
 	detection := &models.Detection{
-		Language:         "python",
-		Version:          "3.11", // Default when not specified
-		Services:         d.detectServicesFromDeps(deps),
-		Confidence:       0.6, // Lower confidence without pyproject.toml
-		LoggingLibraries: loggingLibs,
-		LogFormat:        logFormat,
-		QueueLibraries:   queueLibs,
-		WorkerCommand:    workerCmd,
+		Language:            "python",
+		Version:             "3.11", // Default when not specified
+		Services:            d.detectServicesFromDeps(deps),
+		Confidence:          0.6, // Lower confidence without pyproject.toml
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
 	}
 
 	return detection, nil
@@ -413,4 +419,79 @@ func (d *PythonDetector) detectQueue(deps []string, projectName, poetryName stri
 	}
 
 	return libraries, workerCmd
+}
+
+// detectFileUpload identifies file upload libraries from Python dependencies.
+// Returns the list of detected libraries and the inferred upload path.
+func (d *PythonDetector) detectFileUpload(deps []string, projectPath string) ([]string, string) {
+	var libraries []string
+	uploadPath := ""
+
+	// File upload libraries
+	uploadPackages := map[string]string{
+		"python-multipart": "python-multipart",
+		"aiofiles":         "aiofiles",
+		"starlette":        "starlette",
+		"werkzeug":         "werkzeug",
+	}
+
+	// Web frameworks with file upload support
+	webFrameworks := map[string]string{
+		"fastapi":  "fastapi",
+		"flask":    "flask",
+		"django":   "django",
+		"starlite": "starlite",
+		"litestar": "litestar",
+	}
+
+	hasWebFramework := false
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		// Check upload libraries
+		for pkg, name := range uploadPackages {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+
+		// Check web frameworks
+		for pkg := range webFrameworks {
+			if depLower == pkg || strings.HasPrefix(depLower, pkg+"[") {
+				hasWebFramework = true
+				break
+			}
+		}
+	}
+
+	// If we have upload libraries or a web framework, check for uploads directory
+	if len(libraries) > 0 || hasWebFramework {
+		uploadPath = d.findUploadPath(projectPath)
+	}
+
+	return libraries, uploadPath
+}
+
+// findUploadPath attempts to find the upload directory for Python projects.
+func (d *PythonDetector) findUploadPath(projectPath string) string {
+	// Common upload directory names
+	commonDirs := []string{
+		"uploads",
+		"upload",
+		"files",
+		"media",
+		"media/uploads",
+		"static/uploads",
+	}
+
+	for _, dir := range commonDirs {
+		fullPath := filepath.Join(projectPath, dir)
+		if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+
+	return ""
 }

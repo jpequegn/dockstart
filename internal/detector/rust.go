@@ -56,16 +56,19 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 
 	loggingLibs, logFormat := d.detectLogging(deps)
 	queueLibs, workerCmd := d.detectQueue(deps, config.Package.Name)
+	uploadLibs, uploadPath := d.detectFileUpload(deps, path)
 
 	detection := &models.Detection{
-		Language:         "rust",
-		Version:          d.extractVersion(config),
-		Services:         d.detectServices(deps),
-		Confidence:       d.calculateConfidence(config),
-		LoggingLibraries: loggingLibs,
-		LogFormat:        logFormat,
-		QueueLibraries:   queueLibs,
-		WorkerCommand:    workerCmd,
+		Language:            "rust",
+		Version:             d.extractVersion(config),
+		Services:            d.detectServices(deps),
+		Confidence:          d.calculateConfidence(config),
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
 	}
 
 	return detection, nil
@@ -296,4 +299,83 @@ func (d *RustDetector) detectQueue(deps []string, packageName string) ([]string,
 	}
 
 	return libraries, workerCmd
+}
+
+// detectFileUpload identifies file upload libraries from Rust dependencies.
+// Returns the list of detected libraries and the inferred upload path.
+func (d *RustDetector) detectFileUpload(deps []string, projectPath string) ([]string, string) {
+	var libraries []string
+	uploadPath := ""
+
+	// File upload/multipart handling libraries
+	uploadPackages := map[string]string{
+		"actix-multipart":  "actix-multipart",
+		"multer":           "multer",
+		"axum-extra":       "axum-extra",
+		"rocket-multipart": "rocket-multipart",
+	}
+
+	// Web frameworks with built-in multipart support
+	webFrameworks := map[string]string{
+		"actix-web": "actix-web",
+		"axum":      "axum",
+		"rocket":    "rocket",
+		"warp":      "warp",
+		"tide":      "tide",
+	}
+
+	hasWebFramework := false
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		// Check upload libraries
+		for pkg, name := range uploadPackages {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+
+		// Check web frameworks
+		for pkg := range webFrameworks {
+			if depLower == pkg {
+				hasWebFramework = true
+				break
+			}
+		}
+	}
+
+	// If we have upload libraries or a web framework, check for uploads directory
+	if len(libraries) > 0 || hasWebFramework {
+		uploadPath = d.findUploadPath(projectPath)
+		// If uploads directory exists but no explicit upload lib, mark as having multipart
+		if uploadPath != "" && len(libraries) == 0 {
+			libraries = append(libraries, "multipart")
+		}
+	}
+
+	return libraries, uploadPath
+}
+
+// findUploadPath attempts to find the upload directory for Rust projects.
+func (d *RustDetector) findUploadPath(projectPath string) string {
+	// Common upload directory names
+	commonDirs := []string{
+		"uploads",
+		"upload",
+		"files",
+		"static/uploads",
+		"public/uploads",
+		"assets/uploads",
+	}
+
+	for _, dir := range commonDirs {
+		fullPath := filepath.Join(projectPath, dir)
+		if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+
+	return ""
 }
