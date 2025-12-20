@@ -453,6 +453,173 @@ func TestQueueDetection_Python_Requirements(t *testing.T) {
 	}
 }
 
+// TestQueueDetection_MultipleLibraries tests detection when multiple queue libraries are present.
+func TestQueueDetection_MultipleLibraries(t *testing.T) {
+	tests := []struct {
+		name             string
+		packageJSON      string
+		wantLibraryCount int
+		wantWorkerCmd    string
+	}{
+		{
+			name: "bull and bullmq together",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"bull": "^4.0.0", "bullmq": "^4.0.0"}
+			}`,
+			wantLibraryCount: 2,
+			wantWorkerCmd:    "node worker.js",
+		},
+		{
+			name: "bull and agenda together",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"bull": "^4.0.0", "agenda": "^5.0.0"},
+				"scripts": {"worker": "node src/worker.js"}
+			}`,
+			wantLibraryCount: 2,
+			wantWorkerCmd:    "npm run worker",
+		},
+		{
+			name: "three queue libraries",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"bull": "^4.0.0", "bullmq": "^4.0.0", "bee-queue": "^1.4.0"}
+			}`,
+			wantLibraryCount: 3,
+			wantWorkerCmd:    "node worker.js",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "dockstart-queue-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte(tt.packageJSON), 0644); err != nil {
+				t.Fatalf("Failed to write package.json: %v", err)
+			}
+
+			d := NewNodeDetector()
+			detection, err := d.Detect(tmpDir)
+			if err != nil {
+				t.Fatalf("Detection failed: %v", err)
+			}
+			if detection == nil {
+				t.Fatal("Expected detection, got nil")
+			}
+
+			// Check number of queue libraries detected
+			if len(detection.QueueLibraries) != tt.wantLibraryCount {
+				t.Errorf("QueueLibraries count = %d, want %d (got: %v)",
+					len(detection.QueueLibraries), tt.wantLibraryCount, detection.QueueLibraries)
+			}
+
+			// Check worker command
+			if detection.WorkerCommand != tt.wantWorkerCmd {
+				t.Errorf("WorkerCommand = %q, want %q", detection.WorkerCommand, tt.wantWorkerCmd)
+			}
+
+			// Verify NeedsWorker returns true
+			if !detection.NeedsWorker() {
+				t.Error("Expected NeedsWorker() to return true with multiple queue libraries")
+			}
+		})
+	}
+}
+
+// TestQueueDetection_EdgeCases tests edge cases in queue detection.
+func TestQueueDetection_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name          string
+		packageJSON   string
+		wantLibraries []string
+		wantWorkerCmd string
+	}{
+		{
+			name: "queue in devDependencies",
+			packageJSON: `{
+				"name": "test-app",
+				"devDependencies": {"bullmq": "^4.0.0"}
+			}`,
+			wantLibraries: []string{"bullmq"},
+			wantWorkerCmd: "node worker.js",
+		},
+		{
+			name: "queue with special character script name",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"bull": "^4.0.0"},
+				"scripts": {"worker:dev": "node src/worker.js"}
+			}`,
+			wantLibraries: []string{"bull"},
+			wantWorkerCmd: "npm run worker:dev",
+		},
+		{
+			name: "empty dependencies",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {}
+			}`,
+			wantLibraries: nil,
+			wantWorkerCmd: "",
+		},
+		{
+			name: "only unrelated dependencies",
+			packageJSON: `{
+				"name": "test-app",
+				"dependencies": {"lodash": "^4.0.0", "axios": "^1.0.0"}
+			}`,
+			wantLibraries: nil,
+			wantWorkerCmd: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir, err := os.MkdirTemp("", "dockstart-queue-test-*")
+			if err != nil {
+				t.Fatalf("Failed to create temp dir: %v", err)
+			}
+			defer os.RemoveAll(tmpDir)
+
+			if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte(tt.packageJSON), 0644); err != nil {
+				t.Fatalf("Failed to write package.json: %v", err)
+			}
+
+			d := NewNodeDetector()
+			detection, err := d.Detect(tmpDir)
+			if err != nil {
+				t.Fatalf("Detection failed: %v", err)
+			}
+			if detection == nil {
+				t.Fatal("Expected detection, got nil")
+			}
+
+			// Check queue libraries
+			if len(tt.wantLibraries) == 0 {
+				if len(detection.QueueLibraries) != 0 {
+					t.Errorf("QueueLibraries = %v, want empty", detection.QueueLibraries)
+				}
+			} else {
+				for _, lib := range tt.wantLibraries {
+					if !detection.HasQueueLibrary(lib) {
+						t.Errorf("Expected queue library %q, got %v", lib, detection.QueueLibraries)
+					}
+				}
+			}
+
+			// Check worker command
+			if detection.WorkerCommand != tt.wantWorkerCmd {
+				t.Errorf("WorkerCommand = %q, want %q", detection.WorkerCommand, tt.wantWorkerCmd)
+			}
+		})
+	}
+}
+
 // TestQueueDetection_Rust tests queue library detection for Rust projects.
 func TestQueueDetection_Rust(t *testing.T) {
 	tests := []struct {
