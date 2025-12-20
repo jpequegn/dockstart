@@ -125,9 +125,54 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 			Command:        detection.WorkerCommand,
 			QueueLibraries: detection.QueueLibraries,
 		}
+
+		// Auto-add Redis if a Redis-based queue library is detected
+		// but Redis wasn't detected as a direct dependency
+		if needsRedis(detection.QueueLibraries) && !hasService(config.Services, "redis") {
+			config.Services = append(config.Services, ServiceConfig{
+				Name: "redis",
+			})
+		}
 	}
 
 	return config
+}
+
+// redisBasedQueueLibraries contains queue libraries that require Redis as a broker.
+var redisBasedQueueLibraries = map[string]bool{
+	// Node.js
+	"bull":      true,
+	"bullmq":    true,
+	"bee-queue": true,
+	// Go
+	"asynq": true,
+	"rmq":   true,
+	// Python
+	"rq":  true,
+	"arq": true,
+	// Note: celery can use Redis but also supports other brokers
+	// Rust
+	"sidekiq": true,
+}
+
+// needsRedis checks if any detected queue library requires Redis.
+func needsRedis(queueLibraries []string) bool {
+	for _, lib := range queueLibraries {
+		if redisBasedQueueLibraries[lib] {
+			return true
+		}
+	}
+	return false
+}
+
+// hasService checks if a service is already in the list.
+func hasService(services []ServiceConfig, name string) bool {
+	for _, s := range services {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // render executes the template with the given config.

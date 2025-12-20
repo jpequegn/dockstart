@@ -337,3 +337,175 @@ func TestWorkerSidecar_BuildContext(t *testing.T) {
 			appBuild["dockerfile"], workerBuild["dockerfile"])
 	}
 }
+
+// TestWorkerSidecar_RedisAutoAdd tests that Redis is auto-added when a Redis-based queue library is detected.
+func TestWorkerSidecar_RedisAutoAdd(t *testing.T) {
+	tests := []struct {
+		name           string
+		detection      *models.Detection
+		expectRedis    bool
+		redisDuplicate bool // Should NOT have duplicate Redis
+	}{
+		{
+			name: "bull without redis adds redis",
+			detection: &models.Detection{
+				Language:       "node",
+				Version:        "20",
+				Services:       []string{}, // No services detected
+				QueueLibraries: []string{"bull"},
+				WorkerCommand:  "npm run worker",
+			},
+			expectRedis: true,
+		},
+		{
+			name: "bullmq without redis adds redis",
+			detection: &models.Detection{
+				Language:       "node",
+				Version:        "20",
+				Services:       []string{"postgres"},
+				QueueLibraries: []string{"bullmq"},
+				WorkerCommand:  "npm run worker",
+			},
+			expectRedis: true,
+		},
+		{
+			name: "asynq without redis adds redis",
+			detection: &models.Detection{
+				Language:       "go",
+				Version:        "1.21",
+				Services:       []string{},
+				QueueLibraries: []string{"asynq"},
+				WorkerCommand:  "./app worker",
+			},
+			expectRedis: true,
+		},
+		{
+			name: "rq without redis adds redis",
+			detection: &models.Detection{
+				Language:       "python",
+				Version:        "3.11",
+				Services:       []string{},
+				QueueLibraries: []string{"rq"},
+				WorkerCommand:  "rq worker",
+			},
+			expectRedis: true,
+		},
+		{
+			name: "sidekiq without redis adds redis",
+			detection: &models.Detection{
+				Language:       "rust",
+				Version:        "1.75",
+				Services:       []string{},
+				QueueLibraries: []string{"sidekiq"},
+				WorkerCommand:  "./app worker",
+			},
+			expectRedis: true,
+		},
+		{
+			name: "bull with redis already present - no duplicate",
+			detection: &models.Detection{
+				Language:       "node",
+				Version:        "20",
+				Services:       []string{"redis"},
+				QueueLibraries: []string{"bull"},
+				WorkerCommand:  "npm run worker",
+			},
+			expectRedis:    true,
+			redisDuplicate: false,
+		},
+		{
+			name: "celery without redis - does not add redis (celery supports multiple brokers)",
+			detection: &models.Detection{
+				Language:       "python",
+				Version:        "3.11",
+				Services:       []string{},
+				QueueLibraries: []string{"celery"},
+				WorkerCommand:  "celery -A app worker",
+			},
+			expectRedis: false,
+		},
+		{
+			name: "dramatiq without redis - does not add redis",
+			detection: &models.Detection{
+				Language:       "python",
+				Version:        "3.11",
+				Services:       []string{},
+				QueueLibraries: []string{"dramatiq"},
+				WorkerCommand:  "dramatiq app",
+			},
+			expectRedis: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewComposeGenerator()
+			content, err := g.GenerateContent(tt.detection, "test-app")
+			if err != nil {
+				t.Fatalf("GenerateContent failed: %v", err)
+			}
+
+			// Parse as YAML
+			var parsed map[string]interface{}
+			if err := yaml.Unmarshal(content, &parsed); err != nil {
+				t.Fatalf("Failed to parse YAML: %v", err)
+			}
+
+			services := parsed["services"].(map[string]interface{})
+
+			// Check if Redis service exists
+			_, hasRedis := services["redis"]
+			if tt.expectRedis && !hasRedis {
+				t.Error("Expected Redis service to be present, but it's not")
+			}
+			if !tt.expectRedis && hasRedis {
+				t.Error("Expected Redis service to NOT be present, but it is")
+			}
+
+			// Check for no duplicate Redis in depends_on
+			if hasRedis {
+				worker := services["worker"].(map[string]interface{})
+				dependsOn := worker["depends_on"].([]interface{})
+
+				redisCount := 0
+				for _, dep := range dependsOn {
+					if dep == "redis" {
+						redisCount++
+					}
+				}
+				if redisCount > 1 {
+					t.Errorf("Redis appears %d times in depends_on, expected at most 1", redisCount)
+				}
+			}
+		})
+	}
+}
+
+// TestWorkerSidecar_RedisAutoAddWithEnvVars tests that REDIS_URL is set when Redis is auto-added.
+func TestWorkerSidecar_RedisAutoAddWithEnvVars(t *testing.T) {
+	detection := &models.Detection{
+		Language:       "node",
+		Version:        "20",
+		Services:       []string{}, // No services, but bull needs Redis
+		QueueLibraries: []string{"bull"},
+		WorkerCommand:  "npm run worker",
+	}
+
+	g := NewComposeGenerator()
+	content, err := g.GenerateContent(detection, "test-app")
+	if err != nil {
+		t.Fatalf("GenerateContent failed: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Check that Redis service is present
+	if !strings.Contains(contentStr, "redis:") {
+		t.Error("Expected Redis service to be present")
+	}
+
+	// Check that REDIS_URL is set in worker environment
+	if !strings.Contains(contentStr, "REDIS_URL=redis://redis:6379") {
+		t.Error("Expected REDIS_URL environment variable to be set")
+	}
+}
