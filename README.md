@@ -400,6 +400,138 @@ gunzip -c .devcontainer/backups/postgres-2025-12-20T03-00-00.sql.gz | \
 
 See [docs/sidecars/backup.md](docs/sidecars/backup.md) for detailed documentation.
 
+## File Processing Sidecar
+
+When dockstart detects file upload libraries (multer, python-multipart, etc.), it automatically generates a **file processor sidecar** that watches for uploaded files and processes them (resize images, extract text from PDFs, generate thumbnails).
+
+### How It Works
+
+The file processor sidecar monitors a shared volume for new uploads and processes them automatically:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────────┐
+│     App     │     │   uploads   │     │  file-processor │
+│             │────▶│  (volume)   │◀────│  (ImageMagick,  │
+│ saves files │     │             │     │   Poppler,      │
+└─────────────┘     └─────────────┘     │   FFmpeg)       │
+       │                   │            └────────┬────────┘
+       ▼                   ▼                     │
+  /uploads/pending    /uploads/processed         │
+                                                 ▼
+                                       /uploads/processed
+```
+
+### Detected Upload Libraries
+
+| Language | Libraries |
+|----------|-----------|
+| Node.js | multer, formidable, busboy, express-fileupload |
+| Python | python-multipart, aiofiles, flask-uploads |
+| Go | multipart (standard library) |
+| Rust | actix-multipart, multer |
+
+### Example with File Upload
+
+```bash
+$ dockstart --dry-run ./my-upload-app
+
+📂 Analyzing ./my-upload-app...
+🔍 Detecting project configuration...
+   ✅ Detected: node 20 (confidence: 100%)
+   📦 Services: [postgres]
+   📁 Uploads: multer detected
+   🔗 Sidecars: [file-processor]
+
+📝 Generating devcontainer.json...
+📝 Generating docker-compose.yml...
+📝 Generating Dockerfile...
+📝 Generating Dockerfile.processor...
+📝 Generating processing scripts...
+
+✨ Done!
+```
+
+### Generated File Processor Configuration
+
+When upload libraries are detected:
+
+```yaml
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - uploads:/uploads
+    environment:
+      - UPLOAD_PATH=/uploads/pending
+      - PROCESSED_PATH=/uploads/processed
+      - FAILED_PATH=/uploads/failed
+
+  file-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.processor
+    volumes:
+      - uploads:/uploads
+    depends_on:
+      - app
+    environment:
+      - PENDING_PATH=/uploads/pending
+      - PROCESSED_PATH=/uploads/processed
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    restart: unless-stopped
+
+volumes:
+  uploads:
+```
+
+### Upload Directory Structure
+
+```
+/uploads/
+├── pending/      # App writes uploaded files here
+├── processing/   # Files being processed (temporary)
+├── processed/    # Successfully processed files
+└── failed/       # Files that failed processing
+```
+
+### Using File Uploads
+
+1. Configure your app to save uploads to `/uploads/pending`
+2. The processor sidecar automatically detects new files
+3. Files are processed based on type (images resized, PDFs text-extracted)
+4. Processed files appear in `/uploads/processed`
+5. Your app reads from `/uploads/processed`
+
+```javascript
+// Express/multer example
+const upload = multer({
+  dest: process.env.UPLOAD_PATH || '/uploads/pending'
+});
+
+app.post('/upload', upload.single('image'), (req, res) => {
+  // File is saved to /uploads/pending
+  // Processor will move it to /uploads/processed
+  const processedPath = req.file.path.replace('pending', 'processed');
+  res.json({ processed: processedPath });
+});
+```
+
+### Processing Capabilities
+
+| File Type | Processing | Output |
+|-----------|-----------|--------|
+| Images (jpg, png, gif, webp) | Resize, thumbnails, optimize | Original + thumbnail |
+| PDFs | Text extraction, first page thumbnail | Text file + thumbnail |
+| Videos (mp4, webm, mov) | Thumbnail, metadata, GIF preview | Thumbnail + info.json |
+
+See [docs/sidecars/file-processor.md](docs/sidecars/file-processor.md) for detailed documentation.
+
 ## Generated Files
 
 ### devcontainer.json
@@ -416,6 +548,7 @@ See [docs/sidecars/backup.md](docs/sidecars/backup.md) for detailed documentatio
 - Fluent Bit log aggregator sidecar (when logging libraries detected)
 - Worker sidecar (when queue libraries detected)
 - Database backup sidecar (when databases detected)
+- File processor sidecar (when upload libraries detected)
 - Environment variables for service URLs
 
 ### Dockerfile
@@ -459,6 +592,7 @@ dockstart/
 │   │   ├── logsidecar.go  # Fluent Bit generator
 │   │   ├── backup.go      # Database backup scripts
 │   │   ├── backup_sidecar.go # Backup container generator
+│   │   ├── processor_sidecar.go # File processor generator
 │   │   └── templates/
 │   └── models/             # Data structures
 └── Dockerfile              # Multi-stage container build
