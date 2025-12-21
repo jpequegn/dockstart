@@ -9,7 +9,16 @@ services:
       dockerfile: .devcontainer/Dockerfile
     volumes:
       - ..:/workspace:cached
+{{- if .FileProcessorSidecar.Enabled}}
+      - uploads:/uploads
+{{- end}}
     command: sleep infinity
+{{- if .MetricsSidecar.Enabled}}
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port={{.MetricsSidecar.MetricsPort}}"
+      - "prometheus.path={{.MetricsSidecar.MetricsPath}}"
+{{- end}}
 {{- if or .Services .LogSidecar.Enabled}}
     depends_on:
 {{- range .Services}}
@@ -19,7 +28,7 @@ services:
       - fluent-bit
 {{- end}}
 {{- end}}
-{{- if or .Services .LogSidecar.Enabled}}
+{{- if or .Services .LogSidecar.Enabled .FileProcessorSidecar.Enabled}}
     environment:
 {{- range .Services}}
 {{- if eq .Name "postgres"}}
@@ -32,6 +41,11 @@ services:
 {{- if .LogSidecar.Enabled}}
       - LOG_LEVEL=debug
 {{- end}}
+{{- if .FileProcessorSidecar.Enabled}}
+      - UPLOAD_PATH=/uploads/pending
+      - PROCESSED_PATH=/uploads/processed
+      - FAILED_PATH=/uploads/failed
+{{- end}}
 {{- end}}
 {{- if .LogSidecar.Enabled}}
     logging:
@@ -40,6 +54,51 @@ services:
         fluentd-address: localhost:24224
         tag: app.{{.Name}}
         fluentd-async: "true"
+{{- end}}
+{{- if .WorkerSidecar.Enabled}}
+
+  # Background worker process
+  # Uses same Dockerfile as app but with different command
+  worker:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+{{- if $.FileProcessorSidecar.Enabled}}
+      - uploads:/uploads
+{{- end}}
+    command: {{.WorkerSidecar.Command}}
+    depends_on:
+      - app
+{{- range .Services}}
+      - {{.Name}}
+{{- end}}
+    environment:
+      - WORKER_CONCURRENCY=2
+      - NODE_ENV=development
+{{- range .Services}}
+{{- if eq .Name "postgres"}}
+      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/{{$.Name}}_dev
+{{- end}}
+{{- if eq .Name "redis"}}
+      - REDIS_URL=redis://redis:6379
+{{- end}}
+{{- end}}
+{{- if $.FileProcessorSidecar.Enabled}}
+      - UPLOAD_PATH=/uploads/pending
+      - PROCESSED_PATH=/uploads/processed
+      - FAILED_PATH=/uploads/failed
+{{- end}}
+    restart: unless-stopped
+{{- if $.LogSidecar.Enabled}}
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: worker.{{$.Name}}
+        fluentd-async: "true"
+{{- end}}
 {{- end}}
 {{range .Services}}
 
@@ -79,7 +138,102 @@ services:
       - "24224:24224"
       - "24224:24224/udp"
 {{- end}}
-{{- if or .Services .LogSidecar.Enabled}}
+{{- if .FileProcessorSidecar.Enabled}}
+
+  # File processor sidecar
+  # Processes uploaded files (resize images, extract text, generate thumbnails)
+  file-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.processor
+    volumes:
+      - uploads:/uploads
+    depends_on:
+      - app
+    environment:
+      - PENDING_PATH=/uploads/pending
+      - PROCESSING_PATH=/uploads/processing
+      - PROCESSED_PATH=/uploads/processed
+      - FAILED_PATH=/uploads/failed
+      - POLL_INTERVAL=5
+      - MAX_FILE_SIZE=52428800
+      - RETRY_COUNT=3
+      - NOTIFY_METHOD=file
+    deploy:
+      resources:
+        limits:
+          memory: {{.FileProcessorSidecar.MemoryLimit}}
+          cpus: '{{.FileProcessorSidecar.CPULimit}}'
+    restart: unless-stopped
+{{- end}}
+{{- if .MetricsSidecar.Enabled}}
+
+  # Prometheus metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "{{.MetricsSidecar.PrometheusPort}}:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time={{.MetricsSidecar.RetentionDays}}d'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    depends_on:
+      - app
+{{- if .MetricsSidecar.HasWorker}}
+      - worker
+{{- end}}
+    restart: unless-stopped
+
+  # Grafana dashboards
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "{{.MetricsSidecar.GrafanaPort}}:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+{{- if .MetricsSidecar.HasPostgres}}
+
+  # PostgreSQL metrics exporter
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    environment:
+      - DATA_SOURCE_NAME=postgresql://postgres:postgres@postgres:5432/{{.Name}}_dev?sslmode=disable
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+{{- end}}
+{{- if .MetricsSidecar.HasRedis}}
+
+  # Redis metrics exporter
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    restart: unless-stopped
+{{- end}}
+{{- end}}
+{{- if or .Services .LogSidecar.Enabled .BackupSidecar.Enabled .FileProcessorSidecar.Enabled .MetricsSidecar.Enabled}}
 
 volumes:
 {{- range .Services}}
@@ -93,4 +247,52 @@ volumes:
 {{- if .LogSidecar.Enabled}}
   fluent-bit-logs:
 {{- end}}
+{{- if .BackupSidecar.Enabled}}
+  backups:
+{{- end}}
+{{- if .FileProcessorSidecar.Enabled}}
+  uploads:
+{{- end}}
+{{- if .MetricsSidecar.Enabled}}
+  prometheus-data:
+  grafana-data:
+{{- end}}
+{{- end}}
+{{- if .BackupSidecar.Enabled}}
+
+  # Database backup sidecar
+  # Runs scheduled backups using Supercronic
+  db-backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    volumes:
+      - ./backups:/backup
+{{- if .BackupSidecar.NeedsDockerSocket}}
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+{{- end}}
+    depends_on:
+{{- range .Services}}
+      - {{.Name}}
+{{- end}}
+    environment:
+      - BACKUP_DIR=/backup
+      - RETENTION_DAYS={{.BackupSidecar.RetentionDays}}
+{{- if .BackupSidecar.HasPostgres}}
+      - DB_HOST=postgres
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME={{$.Name}}_dev
+{{- end}}
+{{- if .BackupSidecar.HasMySQL}}
+      - DB_HOST=mysql
+      - DB_USER=root
+      - DB_PASSWORD=mysql
+      - DB_NAME={{$.Name}}_dev
+{{- end}}
+{{- if .BackupSidecar.HasRedis}}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+{{- end}}
+    restart: unless-stopped
 {{- end}}

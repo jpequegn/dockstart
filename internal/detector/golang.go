@@ -48,16 +48,23 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 
 	loggingLibs, logFormat := d.detectLogging(mod)
 	queueLibs, workerCmd := d.detectQueue(mod)
+	uploadLibs, uploadPath := d.detectFileUpload(mod, path)
+	metricsLibs, metricsPort, metricsPath := d.detectMetrics(mod)
 
 	detection := &models.Detection{
-		Language:         "go",
-		Version:          mod.Version,
-		Services:         d.detectServices(mod),
-		Confidence:       d.calculateConfidence(mod),
-		LoggingLibraries: loggingLibs,
-		LogFormat:        logFormat,
-		QueueLibraries:   queueLibs,
-		WorkerCommand:    workerCmd,
+		Language:            "go",
+		Version:             mod.Version,
+		Services:            d.detectServices(mod),
+		Confidence:          d.calculateConfidence(mod),
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
+		MetricsLibraries:    metricsLibs,
+		MetricsPort:         metricsPort,
+		MetricsPath:         metricsPath,
 	}
 
 	return detection, nil
@@ -319,4 +326,125 @@ func (d *GoDetector) detectQueue(mod *goMod) ([]string, string) {
 	}
 
 	return libraries, workerCmd
+}
+
+// detectFileUpload identifies file upload handling from Go dependencies.
+// Returns the list of detected libraries and the inferred upload path.
+func (d *GoDetector) detectFileUpload(mod *goMod, projectPath string) ([]string, string) {
+	var libraries []string
+	uploadPath := ""
+
+	// File upload/multipart handling patterns
+	uploadPatterns := map[string]string{
+		"github.com/gin-contrib/static": "gin-static",
+		"github.com/h2non/filetype":     "filetype",
+		"github.com/gabriel-vasile/mimetype": "mimetype",
+	}
+
+	// Web frameworks that have built-in multipart support
+	webFrameworks := map[string]string{
+		"github.com/gin-gonic/gin":     "gin",
+		"github.com/labstack/echo":     "echo",
+		"github.com/gofiber/fiber":     "fiber",
+		"github.com/go-chi/chi":        "chi",
+		"github.com/gorilla/mux":       "gorilla",
+	}
+
+	hasWebFramework := false
+
+	for _, req := range mod.Requires {
+		// Check explicit upload libraries
+		for pattern, name := range uploadPatterns {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+
+		// Check for web frameworks (they all support multipart/form-data)
+		for pattern := range webFrameworks {
+			if strings.HasPrefix(req, pattern) {
+				hasWebFramework = true
+				break
+			}
+		}
+	}
+
+	// If we have a web framework, check for uploads directory as hint
+	if hasWebFramework || len(libraries) > 0 {
+		uploadPath = d.findUploadPath(projectPath)
+		// If uploads directory exists, mark as having file upload capability
+		if uploadPath != "" && len(libraries) == 0 {
+			libraries = append(libraries, "multipart")
+		}
+	}
+
+	return libraries, uploadPath
+}
+
+// findUploadPath attempts to find the upload directory for Go projects.
+func (d *GoDetector) findUploadPath(projectPath string) string {
+	// Common upload directory names
+	commonDirs := []string{
+		"uploads",
+		"upload",
+		"files",
+		"static/uploads",
+		"public/uploads",
+		"assets/uploads",
+	}
+
+	for _, dir := range commonDirs {
+		fullPath := filepath.Join(projectPath, dir)
+		if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+
+	return ""
+}
+
+// detectMetrics identifies Prometheus metrics libraries from Go dependencies.
+// Returns the list of detected libraries, the metrics port, and the metrics path.
+func (d *GoDetector) detectMetrics(mod *goMod) ([]string, int, string) {
+	var libraries []string
+	metricsPort := 0  // 0 means use default
+	metricsPath := "" // Empty means use default "/metrics"
+
+	// Prometheus client libraries for Go
+	metricsPatterns := map[string]string{
+		"github.com/prometheus/client_golang": "prometheus-client",
+		"github.com/prometheus/promauto":      "promauto",
+		"go.opentelemetry.io/otel/exporters/prometheus": "opentelemetry-prometheus",
+		"github.com/VictoriaMetrics/metrics": "victoriametrics",
+		"github.com/armon/go-metrics":        "go-metrics",
+	}
+
+	for _, req := range mod.Requires {
+		for pattern, name := range metricsPatterns {
+			if strings.HasPrefix(req, pattern) {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, name)
+				}
+				break
+			}
+		}
+	}
+
+	// If metrics libraries detected, default port is 8080 (Go standard)
+	// and path is "/metrics"
+	if len(libraries) > 0 {
+		metricsPort = 8080
+		metricsPath = "/metrics"
+	}
+
+	return libraries, metricsPort, metricsPath
 }

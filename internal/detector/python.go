@@ -91,16 +91,23 @@ func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, er
 
 	loggingLibs, logFormat := d.detectLogging(deps)
 	queueLibs, workerCmd := d.detectQueue(deps, config.Project.Name, config.Tool.Poetry.Name)
+	uploadLibs, uploadPath := d.detectFileUpload(deps, filepath.Dir(path))
+	metricsLibs, metricsPort, metricsPath := d.detectMetrics(deps)
 
 	detection := &models.Detection{
-		Language:         "python",
-		Version:          d.extractVersion(config),
-		Services:         d.detectServicesFromDeps(deps),
-		Confidence:       d.calculateConfidencePyproject(config),
-		LoggingLibraries: loggingLibs,
-		LogFormat:        logFormat,
-		QueueLibraries:   queueLibs,
-		WorkerCommand:    workerCmd,
+		Language:            "python",
+		Version:             d.extractVersion(config),
+		Services:            d.detectServicesFromDeps(deps),
+		Confidence:          d.calculateConfidencePyproject(config),
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
+		MetricsLibraries:    metricsLibs,
+		MetricsPort:         metricsPort,
+		MetricsPath:         metricsPath,
 	}
 
 	return detection, nil
@@ -149,16 +156,23 @@ func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection,
 
 	loggingLibs, logFormat := d.detectLogging(deps)
 	queueLibs, workerCmd := d.detectQueue(deps, "", "")
+	uploadLibs, uploadPath := d.detectFileUpload(deps, filepath.Dir(path))
+	metricsLibs, metricsPort, metricsPath := d.detectMetrics(deps)
 
 	detection := &models.Detection{
-		Language:         "python",
-		Version:          "3.11", // Default when not specified
-		Services:         d.detectServicesFromDeps(deps),
-		Confidence:       0.6, // Lower confidence without pyproject.toml
-		LoggingLibraries: loggingLibs,
-		LogFormat:        logFormat,
-		QueueLibraries:   queueLibs,
-		WorkerCommand:    workerCmd,
+		Language:            "python",
+		Version:             "3.11", // Default when not specified
+		Services:            d.detectServicesFromDeps(deps),
+		Confidence:          0.6, // Lower confidence without pyproject.toml
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
+		MetricsLibraries:    metricsLibs,
+		MetricsPort:         metricsPort,
+		MetricsPath:         metricsPath,
 	}
 
 	return detection, nil
@@ -413,4 +427,129 @@ func (d *PythonDetector) detectQueue(deps []string, projectName, poetryName stri
 	}
 
 	return libraries, workerCmd
+}
+
+// detectFileUpload identifies file upload libraries from Python dependencies.
+// Returns the list of detected libraries and the inferred upload path.
+func (d *PythonDetector) detectFileUpload(deps []string, projectPath string) ([]string, string) {
+	var libraries []string
+	uploadPath := ""
+
+	// File upload libraries
+	uploadPackages := map[string]string{
+		"python-multipart": "python-multipart",
+		"aiofiles":         "aiofiles",
+		"starlette":        "starlette",
+		"werkzeug":         "werkzeug",
+	}
+
+	// Web frameworks with file upload support
+	webFrameworks := map[string]string{
+		"fastapi":  "fastapi",
+		"flask":    "flask",
+		"django":   "django",
+		"starlite": "starlite",
+		"litestar": "litestar",
+	}
+
+	hasWebFramework := false
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		// Check upload libraries
+		for pkg, name := range uploadPackages {
+			if depLower == pkg {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+
+		// Check web frameworks
+		for pkg := range webFrameworks {
+			if depLower == pkg || strings.HasPrefix(depLower, pkg+"[") {
+				hasWebFramework = true
+				break
+			}
+		}
+	}
+
+	// If we have upload libraries or a web framework, check for uploads directory
+	if len(libraries) > 0 || hasWebFramework {
+		uploadPath = d.findUploadPath(projectPath)
+	}
+
+	return libraries, uploadPath
+}
+
+// findUploadPath attempts to find the upload directory for Python projects.
+func (d *PythonDetector) findUploadPath(projectPath string) string {
+	// Common upload directory names
+	commonDirs := []string{
+		"uploads",
+		"upload",
+		"files",
+		"media",
+		"media/uploads",
+		"static/uploads",
+	}
+
+	for _, dir := range commonDirs {
+		fullPath := filepath.Join(projectPath, dir)
+		if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+
+	return ""
+}
+
+// detectMetrics identifies Prometheus metrics libraries from Python dependencies.
+// Returns the list of detected libraries, the metrics port, and the metrics path.
+func (d *PythonDetector) detectMetrics(deps []string) ([]string, int, string) {
+	var libraries []string
+	metricsPort := 0  // 0 means use default
+	metricsPath := "" // Empty means use default "/metrics"
+
+	// Prometheus client libraries for Python
+	metricsPackages := map[string]string{
+		"prometheus-client":                  "prometheus-client",
+		"prometheus_client":                  "prometheus-client",
+		"prometheus-fastapi-instrumentator":  "prometheus-fastapi-instrumentator",
+		"prometheus-flask-exporter":          "prometheus-flask-exporter",
+		"django-prometheus":                  "django-prometheus",
+		"starlette-prometheus":               "starlette-prometheus",
+		"opentelemetry-exporter-prometheus":  "opentelemetry-prometheus",
+		"aioprometheus":                      "aioprometheus",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		for pkg, name := range metricsPackages {
+			if depLower == pkg || strings.ReplaceAll(depLower, "_", "-") == pkg {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, name)
+				}
+				break
+			}
+		}
+	}
+
+	// If metrics libraries detected, default port is 8000 (Python/FastAPI standard)
+	// and path is "/metrics"
+	if len(libraries) > 0 {
+		metricsPort = 8000
+		metricsPath = "/metrics"
+	}
+
+	return libraries, metricsPort, metricsPath
 }
