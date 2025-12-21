@@ -61,6 +61,7 @@ func (d *NodeDetector) Detect(path string) (*models.Detection, error) {
 	loggingLibs, logFormat := d.detectLogging(pkg)
 	queueLibs, workerCmd := d.detectQueue(pkg)
 	uploadLibs, uploadPath := d.detectFileUpload(pkg, path)
+	metricsLibs, metricsPort, metricsPath := d.detectMetrics(pkg)
 
 	detection := &models.Detection{
 		Language:            "node",
@@ -73,6 +74,9 @@ func (d *NodeDetector) Detect(path string) (*models.Detection, error) {
 		WorkerCommand:       workerCmd,
 		FileUploadLibraries: uploadLibs,
 		UploadPath:          uploadPath,
+		MetricsLibraries:    metricsLibs,
+		MetricsPort:         metricsPort,
+		MetricsPath:         metricsPath,
 	}
 
 	return detection, nil
@@ -399,4 +403,49 @@ func (d *NodeDetector) findUploadPath(projectPath string) string {
 
 	// Default to "uploads" if no directory found
 	return ""
+}
+
+// detectMetrics identifies Prometheus metrics libraries from dependencies.
+// Returns the list of detected libraries, the metrics port, and the metrics path.
+func (d *NodeDetector) detectMetrics(pkg packageJSON) ([]string, int, string) {
+	var libraries []string
+	metricsPort := 0    // 0 means use default
+	metricsPath := ""   // Empty means use default "/metrics"
+
+	// Merge all dependencies for checking
+	allDeps := make(map[string]string)
+	for k, v := range pkg.Dependencies {
+		allDeps[k] = v
+	}
+	for k, v := range pkg.DevDependencies {
+		allDeps[k] = v
+	}
+
+	// Prometheus client libraries for Node.js
+	metricsLibraries := map[string]string{
+		"prom-client":                    "prom-client",
+		"express-prometheus-middleware":  "express-prometheus-middleware",
+		"express-prom-bundle":            "express-prom-bundle",
+		"prometheus-api-metrics":         "prometheus-api-metrics",
+		"@opentelemetry/exporter-prometheus": "opentelemetry-prometheus",
+		"fastify-metrics":                "fastify-metrics",
+		"koa-prometheus-exporter":        "koa-prometheus-exporter",
+		"nestjs-prometheus":              "nestjs-prometheus",
+	}
+
+	// Check for metrics libraries
+	for dep, name := range metricsLibraries {
+		if _, exists := allDeps[dep]; exists {
+			libraries = append(libraries, name)
+		}
+	}
+
+	// If metrics libraries detected, default port is 3000 (Node.js standard)
+	// and path is "/metrics"
+	if len(libraries) > 0 {
+		metricsPort = 3000
+		metricsPath = "/metrics"
+	}
+
+	return libraries, metricsPort, metricsPath
 }

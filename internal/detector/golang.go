@@ -49,6 +49,7 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 	loggingLibs, logFormat := d.detectLogging(mod)
 	queueLibs, workerCmd := d.detectQueue(mod)
 	uploadLibs, uploadPath := d.detectFileUpload(mod, path)
+	metricsLibs, metricsPort, metricsPath := d.detectMetrics(mod)
 
 	detection := &models.Detection{
 		Language:            "go",
@@ -61,6 +62,9 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 		WorkerCommand:       workerCmd,
 		FileUploadLibraries: uploadLibs,
 		UploadPath:          uploadPath,
+		MetricsLibraries:    metricsLibs,
+		MetricsPort:         metricsPort,
+		MetricsPath:         metricsPath,
 	}
 
 	return detection, nil
@@ -398,4 +402,49 @@ func (d *GoDetector) findUploadPath(projectPath string) string {
 	}
 
 	return ""
+}
+
+// detectMetrics identifies Prometheus metrics libraries from Go dependencies.
+// Returns the list of detected libraries, the metrics port, and the metrics path.
+func (d *GoDetector) detectMetrics(mod *goMod) ([]string, int, string) {
+	var libraries []string
+	metricsPort := 0  // 0 means use default
+	metricsPath := "" // Empty means use default "/metrics"
+
+	// Prometheus client libraries for Go
+	metricsPatterns := map[string]string{
+		"github.com/prometheus/client_golang": "prometheus-client",
+		"github.com/prometheus/promauto":      "promauto",
+		"go.opentelemetry.io/otel/exporters/prometheus": "opentelemetry-prometheus",
+		"github.com/VictoriaMetrics/metrics": "victoriametrics",
+		"github.com/armon/go-metrics":        "go-metrics",
+	}
+
+	for _, req := range mod.Requires {
+		for pattern, name := range metricsPatterns {
+			if strings.HasPrefix(req, pattern) {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, name)
+				}
+				break
+			}
+		}
+	}
+
+	// If metrics libraries detected, default port is 8080 (Go standard)
+	// and path is "/metrics"
+	if len(libraries) > 0 {
+		metricsPort = 8080
+		metricsPath = "/metrics"
+	}
+
+	return libraries, metricsPort, metricsPath
 }
