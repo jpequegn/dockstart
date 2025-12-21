@@ -1,0 +1,17 @@
+{
+  "name": "file-processor-example",
+  "version": "1.0.0",
+  "description": "Example project demonstrating dockstart file processor sidecar",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "multer": "^1.4.5-lts.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

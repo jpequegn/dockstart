@@ -81,8 +81,9 @@ func (g *DevcontainerGenerator) buildConfig(detection *models.Detection, project
 		RemoteUser: "root", // Default, will be overridden per language
 	}
 
-	// Determine if we need docker-compose (when services are detected)
-	config.UseCompose = len(detection.Services) > 0
+	// Determine if we need docker-compose (when services, sidecars, or metrics detected)
+	config.UseCompose = len(detection.Services) > 0 || detection.HasStructuredLogging() ||
+		detection.NeedsMetrics() || detection.NeedsWorker() || detection.NeedsFileProcessor()
 
 	// Language-specific configuration
 	switch detection.Language {
@@ -136,6 +137,17 @@ func (g *DevcontainerGenerator) buildConfig(detection *models.Detection, project
 		case "redis":
 			config.ForwardPorts = append(config.ForwardPorts, 6379)
 		}
+	}
+
+	// Add Fluent Bit port if logging is detected
+	if detection.HasStructuredLogging() {
+		config.ForwardPorts = append(config.ForwardPorts, 24224)
+	}
+
+	// Add Prometheus and Grafana ports if metrics are detected
+	if detection.NeedsMetrics() {
+		config.ForwardPorts = append(config.ForwardPorts, 9090)  // Prometheus
+		config.ForwardPorts = append(config.ForwardPorts, 3001)  // Grafana
 	}
 
 	return config

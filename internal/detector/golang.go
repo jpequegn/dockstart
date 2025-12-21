@@ -46,11 +46,25 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 		return nil, err
 	}
 
+	loggingLibs, logFormat := d.detectLogging(mod)
+	queueLibs, workerCmd := d.detectQueue(mod)
+	uploadLibs, uploadPath := d.detectFileUpload(mod, path)
+	metricsLibs, metricsPort, metricsPath := d.detectMetrics(mod)
+
 	detection := &models.Detection{
-		Language:   "go",
-		Version:    mod.Version,
-		Services:   d.detectServices(mod),
-		Confidence: d.calculateConfidence(mod),
+		Language:            "go",
+		Version:             mod.Version,
+		Services:            d.detectServices(mod),
+		Confidence:          d.calculateConfidence(mod),
+		LoggingLibraries:    loggingLibs,
+		LogFormat:           logFormat,
+		QueueLibraries:      queueLibs,
+		WorkerCommand:       workerCmd,
+		FileUploadLibraries: uploadLibs,
+		UploadPath:          uploadPath,
+		MetricsLibraries:    metricsLibs,
+		MetricsPort:         metricsPort,
+		MetricsPath:         metricsPath,
 	}
 
 	return detection, nil
@@ -193,6 +207,54 @@ func containsService(services []string, service string) bool {
 	return false
 }
 
+// detectLogging identifies structured logging libraries from Go dependencies.
+// Returns the list of detected libraries and the inferred log format.
+func (d *GoDetector) detectLogging(mod *goMod) ([]string, string) {
+	var libraries []string
+	logFormat := "unknown"
+
+	// Structured logging libraries that output JSON by default
+	jsonLoggers := map[string]string{
+		"go.uber.org/zap":                "zap",
+		"github.com/rs/zerolog":          "zerolog",
+		"log/slog":                       "slog",
+		"golang.org/x/exp/slog":          "slog",
+	}
+
+	// Logging libraries that typically output text by default
+	textLoggers := map[string]string{
+		"github.com/sirupsen/logrus":     "logrus",
+		"github.com/apex/log":            "apex-log",
+		"github.com/inconshreveable/log15": "log15",
+		"github.com/go-kit/log":          "go-kit-log",
+		"github.com/hashicorp/go-hclog":  "hclog",
+	}
+
+	for _, req := range mod.Requires {
+		// Check JSON loggers first
+		for pattern, name := range jsonLoggers {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				logFormat = "json"
+				break
+			}
+		}
+
+		// Check text loggers
+		for pattern, name := range textLoggers {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				if logFormat == "unknown" {
+					logFormat = "text"
+				}
+				break
+			}
+		}
+	}
+
+	return libraries, logFormat
+}
+
 // calculateConfidence determines how confident we are in the detection.
 func (d *GoDetector) calculateConfidence(mod *goMod) float64 {
 	confidence := 0.6 // Base confidence for having go.mod
@@ -225,4 +287,164 @@ func (d *GoDetector) GetVSCodeExtensions() []string {
 	return []string{
 		"golang.go",
 	}
+}
+
+// detectQueue identifies job queue/worker libraries from Go dependencies.
+// Returns the list of detected libraries and the inferred worker command.
+func (d *GoDetector) detectQueue(mod *goMod) ([]string, string) {
+	var libraries []string
+	workerCmd := ""
+
+	// Queue libraries that require a worker process
+	queuePatterns := map[string]string{
+		"github.com/hibiken/asynq":           "asynq",
+		"github.com/RichardKnop/machinery":   "machinery",
+		"github.com/gocraft/work":            "gocraft-work",
+		"github.com/adjust/rmq":              "rmq",
+		"github.com/gocelery/gocelery":       "gocelery",
+	}
+
+	for _, req := range mod.Requires {
+		for pattern, name := range queuePatterns {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+	}
+
+	// If queue libraries detected, set default worker command
+	// Go workers typically use the same binary with a flag or subcommand
+	if len(libraries) > 0 {
+		// Extract binary name from module path
+		binaryName := "app"
+		if mod.Module != "" {
+			parts := strings.Split(mod.Module, "/")
+			binaryName = parts[len(parts)-1]
+		}
+		workerCmd = "./" + binaryName + " worker"
+	}
+
+	return libraries, workerCmd
+}
+
+// detectFileUpload identifies file upload handling from Go dependencies.
+// Returns the list of detected libraries and the inferred upload path.
+func (d *GoDetector) detectFileUpload(mod *goMod, projectPath string) ([]string, string) {
+	var libraries []string
+	uploadPath := ""
+
+	// File upload/multipart handling patterns
+	uploadPatterns := map[string]string{
+		"github.com/gin-contrib/static": "gin-static",
+		"github.com/h2non/filetype":     "filetype",
+		"github.com/gabriel-vasile/mimetype": "mimetype",
+	}
+
+	// Web frameworks that have built-in multipart support
+	webFrameworks := map[string]string{
+		"github.com/gin-gonic/gin":     "gin",
+		"github.com/labstack/echo":     "echo",
+		"github.com/gofiber/fiber":     "fiber",
+		"github.com/go-chi/chi":        "chi",
+		"github.com/gorilla/mux":       "gorilla",
+	}
+
+	hasWebFramework := false
+
+	for _, req := range mod.Requires {
+		// Check explicit upload libraries
+		for pattern, name := range uploadPatterns {
+			if strings.HasPrefix(req, pattern) {
+				libraries = append(libraries, name)
+				break
+			}
+		}
+
+		// Check for web frameworks (they all support multipart/form-data)
+		for pattern := range webFrameworks {
+			if strings.HasPrefix(req, pattern) {
+				hasWebFramework = true
+				break
+			}
+		}
+	}
+
+	// If we have a web framework, check for uploads directory as hint
+	if hasWebFramework || len(libraries) > 0 {
+		uploadPath = d.findUploadPath(projectPath)
+		// If uploads directory exists, mark as having file upload capability
+		if uploadPath != "" && len(libraries) == 0 {
+			libraries = append(libraries, "multipart")
+		}
+	}
+
+	return libraries, uploadPath
+}
+
+// findUploadPath attempts to find the upload directory for Go projects.
+func (d *GoDetector) findUploadPath(projectPath string) string {
+	// Common upload directory names
+	commonDirs := []string{
+		"uploads",
+		"upload",
+		"files",
+		"static/uploads",
+		"public/uploads",
+		"assets/uploads",
+	}
+
+	for _, dir := range commonDirs {
+		fullPath := filepath.Join(projectPath, dir)
+		if info, err := os.Stat(fullPath); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+
+	return ""
+}
+
+// detectMetrics identifies Prometheus metrics libraries from Go dependencies.
+// Returns the list of detected libraries, the metrics port, and the metrics path.
+func (d *GoDetector) detectMetrics(mod *goMod) ([]string, int, string) {
+	var libraries []string
+	metricsPort := 0  // 0 means use default
+	metricsPath := "" // Empty means use default "/metrics"
+
+	// Prometheus client libraries for Go
+	metricsPatterns := map[string]string{
+		"github.com/prometheus/client_golang": "prometheus-client",
+		"github.com/prometheus/promauto":      "promauto",
+		"go.opentelemetry.io/otel/exporters/prometheus": "opentelemetry-prometheus",
+		"github.com/VictoriaMetrics/metrics": "victoriametrics",
+		"github.com/armon/go-metrics":        "go-metrics",
+	}
+
+	for _, req := range mod.Requires {
+		for pattern, name := range metricsPatterns {
+			if strings.HasPrefix(req, pattern) {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, name)
+				}
+				break
+			}
+		}
+	}
+
+	// If metrics libraries detected, default port is 8080 (Go standard)
+	// and path is "/metrics"
+	if len(libraries) > 0 {
+		metricsPort = 8080
+		metricsPath = "/metrics"
+	}
+
+	return libraries, metricsPort, metricsPath
 }

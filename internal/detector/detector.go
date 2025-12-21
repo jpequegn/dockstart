@@ -27,7 +27,8 @@ func NewRegistry() *DetectorRegistry {
 		detectors: []Detector{
 			NewNodeDetector(),
 			NewGoDetector(),
-			// TODO: Add more detectors (Python, Rust)
+			NewPythonDetector(),
+			NewRustDetector(),
 		},
 	}
 }

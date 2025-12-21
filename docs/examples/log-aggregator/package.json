@@ -1,0 +1,18 @@
+{
+  "name": "log-aggregator-example",
+  "version": "1.0.0",
+  "description": "Example project demonstrating dockstart log aggregator sidecar",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pino": "^8.17.0",
+    "pino-http": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

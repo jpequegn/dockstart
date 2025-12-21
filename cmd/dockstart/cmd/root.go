@@ -91,7 +91,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	if detection == nil {
 		fmt.Println("   ⚠️  No supported language detected")
-		fmt.Println("   Supported: Node.js (package.json), Go (go.mod)")
+		fmt.Println("   Supported: Node.js (package.json), Go (go.mod), Python (pyproject.toml/requirements.txt), Rust (Cargo.toml)")
 		return nil
 	}
 
@@ -129,8 +129,73 @@ func run(cmd *cobra.Command, args []string) error {
 		fmt.Println("   ✅ Created .devcontainer/devcontainer.json")
 	}
 
-	// TODO: Generate docker-compose.yml (Issue #6)
-	// TODO: Generate Dockerfile (Issue #7)
+	// Step 3: Generate docker-compose.yml (when services or sidecars are detected)
+	needsCompose := len(detection.Services) > 0 || detection.NeedsMetrics() || detection.NeedsWorker() || detection.NeedsFileProcessor()
+	if needsCompose {
+		fmt.Println("\n📝 Generating docker-compose.yml...")
+		composeGen := generator.NewComposeGenerator()
+
+		if dryRun {
+			content, err := composeGen.GenerateContent(detection, projectName)
+			if err != nil {
+				return fmt.Errorf("compose generation failed: %w", err)
+			}
+			fmt.Println("\n--- .devcontainer/docker-compose.yml ---")
+			fmt.Println(string(content))
+			fmt.Println("--- end ---")
+		} else {
+			composePath := filepath.Join(absPath, ".devcontainer", "docker-compose.yml")
+			if _, err := os.Stat(composePath); err == nil && !force {
+				return fmt.Errorf("docker-compose.yml already exists. Use --force to overwrite")
+			}
+
+			if err := composeGen.Generate(detection, absPath, projectName); err != nil {
+				return fmt.Errorf("compose generation failed: %w", err)
+			}
+			fmt.Println("   ✅ Created .devcontainer/docker-compose.yml")
+		}
+	}
+
+	// Step 3b: Generate metrics sidecar files (Prometheus + Grafana config)
+	metricsGen := generator.NewMetricsSidecarGenerator()
+	if metricsGen.ShouldGenerate(detection) {
+		fmt.Println("\n📝 Generating metrics stack configuration...")
+		if !dryRun {
+			if err := metricsGen.Generate(detection, absPath, projectName); err != nil {
+				return fmt.Errorf("metrics sidecar generation failed: %w", err)
+			}
+			fmt.Println("   ✅ Created .devcontainer/prometheus/prometheus.yml")
+			fmt.Println("   ✅ Created .devcontainer/grafana/provisioning/datasources/prometheus.yml")
+			fmt.Println("   ✅ Created .devcontainer/grafana/provisioning/dashboards/provider.yml")
+			fmt.Println("   ✅ Created .devcontainer/grafana/provisioning/dashboards/app-metrics.json")
+		} else {
+			fmt.Println("   📊 Would create Prometheus and Grafana configuration files")
+		}
+	}
+
+	// Step 4: Generate Dockerfile
+	fmt.Println("\n📝 Generating Dockerfile...")
+	dockerfileGen := generator.NewDockerfileGenerator()
+
+	if dryRun {
+		content, err := dockerfileGen.GenerateContent(detection, projectName)
+		if err != nil {
+			return fmt.Errorf("dockerfile generation failed: %w", err)
+		}
+		fmt.Println("\n--- .devcontainer/Dockerfile ---")
+		fmt.Println(string(content))
+		fmt.Println("--- end ---")
+	} else {
+		dockerfilePath := filepath.Join(absPath, ".devcontainer", "Dockerfile")
+		if _, err := os.Stat(dockerfilePath); err == nil && !force {
+			return fmt.Errorf("Dockerfile already exists. Use --force to overwrite")
+		}
+
+		if err := dockerfileGen.Generate(detection, absPath, projectName); err != nil {
+			return fmt.Errorf("dockerfile generation failed: %w", err)
+		}
+		fmt.Println("   ✅ Created .devcontainer/Dockerfile")
+	}
 
 	fmt.Println("\n✨ Done!")
 	return nil
