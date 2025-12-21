@@ -66,6 +66,33 @@ type BackupSidecarComposeConfig struct {
 	NeedsDockerSocket bool
 }
 
+// FileProcessorSidecarComposeConfig holds configuration for the file processor sidecar.
+type FileProcessorSidecarComposeConfig struct {
+	// Enabled indicates whether to include the file processor sidecar
+	Enabled bool
+
+	// FileUploadLibraries is the list of detected file upload libraries
+	FileUploadLibraries []string
+
+	// UploadPath is the detected upload path from the app
+	UploadPath string
+
+	// ProcessImages enables image processing (resize, thumbnails)
+	ProcessImages bool
+
+	// ProcessDocuments enables document processing (PDF text extraction)
+	ProcessDocuments bool
+
+	// ProcessVideo enables video processing (thumbnails, previews)
+	ProcessVideo bool
+
+	// MemoryLimit is the memory limit for the processor container (e.g., "512M")
+	MemoryLimit string
+
+	// CPULimit is the CPU limit for the processor container (e.g., "0.5")
+	CPULimit string
+}
+
 // ComposeConfig holds the configuration for generating docker-compose.yml.
 type ComposeConfig struct {
 	// Name is the project name (used for database names, etc.)
@@ -82,6 +109,9 @@ type ComposeConfig struct {
 
 	// BackupSidecar holds configuration for the database backup sidecar
 	BackupSidecar BackupSidecarComposeConfig
+
+	// FileProcessorSidecar holds configuration for the file processor sidecar
+	FileProcessorSidecar FileProcessorSidecarComposeConfig
 }
 
 // ComposeGenerator generates docker-compose.yml files.
@@ -180,6 +210,25 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 			HasRedis:          hasRedis,
 			HasSQLite:         false, // SQLite detection not implemented yet
 			NeedsDockerSocket: hasRedis, // Redis backup uses docker cp
+		}
+	}
+
+	// Configure file processor sidecar if file upload libraries are detected
+	if detection.NeedsFileProcessor() {
+		uploadPath := detection.UploadPath
+		if uploadPath == "" {
+			uploadPath = "/uploads"
+		}
+
+		config.FileProcessorSidecar = FileProcessorSidecarComposeConfig{
+			Enabled:             true,
+			FileUploadLibraries: detection.FileUploadLibraries,
+			UploadPath:          uploadPath,
+			ProcessImages:       true,  // Enable by default
+			ProcessDocuments:    false, // Disabled by default
+			ProcessVideo:        false, // Disabled by default
+			MemoryLimit:         "512M",
+			CPULimit:            "0.5",
 		}
 	}
 
