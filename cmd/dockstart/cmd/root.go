@@ -129,8 +129,9 @@ func run(cmd *cobra.Command, args []string) error {
 		fmt.Println("   ✅ Created .devcontainer/devcontainer.json")
 	}
 
-	// Step 3: Generate docker-compose.yml (only when services detected)
-	if len(detection.Services) > 0 {
+	// Step 3: Generate docker-compose.yml (when services or sidecars are detected)
+	needsCompose := len(detection.Services) > 0 || detection.NeedsMetrics() || detection.NeedsWorker() || detection.NeedsFileProcessor()
+	if needsCompose {
 		fmt.Println("\n📝 Generating docker-compose.yml...")
 		composeGen := generator.NewComposeGenerator()
 
@@ -152,6 +153,23 @@ func run(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("compose generation failed: %w", err)
 			}
 			fmt.Println("   ✅ Created .devcontainer/docker-compose.yml")
+		}
+	}
+
+	// Step 3b: Generate metrics sidecar files (Prometheus + Grafana config)
+	metricsGen := generator.NewMetricsSidecarGenerator()
+	if metricsGen.ShouldGenerate(detection) {
+		fmt.Println("\n📝 Generating metrics stack configuration...")
+		if !dryRun {
+			if err := metricsGen.Generate(detection, absPath, projectName); err != nil {
+				return fmt.Errorf("metrics sidecar generation failed: %w", err)
+			}
+			fmt.Println("   ✅ Created .devcontainer/prometheus/prometheus.yml")
+			fmt.Println("   ✅ Created .devcontainer/grafana/provisioning/datasources/prometheus.yml")
+			fmt.Println("   ✅ Created .devcontainer/grafana/provisioning/dashboards/provider.yml")
+			fmt.Println("   ✅ Created .devcontainer/grafana/provisioning/dashboards/app-metrics.json")
+		} else {
+			fmt.Println("   📊 Would create Prometheus and Grafana configuration files")
 		}
 	}
 

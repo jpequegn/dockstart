@@ -93,6 +93,39 @@ type FileProcessorSidecarComposeConfig struct {
 	CPULimit string
 }
 
+// MetricsSidecarComposeConfig holds configuration for the Prometheus + Grafana metrics stack.
+type MetricsSidecarComposeConfig struct {
+	// Enabled indicates whether to include the metrics sidecar
+	Enabled bool
+
+	// MetricsLibraries is the list of detected metrics libraries
+	MetricsLibraries []string
+
+	// MetricsPort is the port where the app exposes /metrics
+	MetricsPort int
+
+	// MetricsPath is the path to the metrics endpoint
+	MetricsPath string
+
+	// PrometheusPort is the external port for Prometheus (default: 9090)
+	PrometheusPort int
+
+	// GrafanaPort is the external port for Grafana (default: 3001)
+	GrafanaPort int
+
+	// HasWorker indicates if a worker service exists
+	HasWorker bool
+
+	// HasPostgres indicates if Postgres exporter should be included
+	HasPostgres bool
+
+	// HasRedis indicates if Redis exporter should be included
+	HasRedis bool
+
+	// RetentionDays is the number of days to retain metrics (default: 7)
+	RetentionDays int
+}
+
 // ComposeConfig holds the configuration for generating docker-compose.yml.
 type ComposeConfig struct {
 	// Name is the project name (used for database names, etc.)
@@ -112,6 +145,9 @@ type ComposeConfig struct {
 
 	// FileProcessorSidecar holds configuration for the file processor sidecar
 	FileProcessorSidecar FileProcessorSidecarComposeConfig
+
+	// MetricsSidecar holds configuration for the Prometheus + Grafana metrics stack
+	MetricsSidecar MetricsSidecarComposeConfig
 }
 
 // ComposeGenerator generates docker-compose.yml files.
@@ -229,6 +265,32 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 			ProcessVideo:        false, // Disabled by default
 			MemoryLimit:         "512M",
 			CPULimit:            "0.5",
+		}
+	}
+
+	// Configure metrics sidecar if metrics libraries are detected
+	if detection.NeedsMetrics() {
+		metricsPort := detection.GetMetricsPort()
+		if detection.MetricsPort > 0 {
+			metricsPort = detection.MetricsPort
+		}
+
+		metricsPath := detection.GetMetricsPath()
+		if detection.MetricsPath != "" {
+			metricsPath = detection.MetricsPath
+		}
+
+		config.MetricsSidecar = MetricsSidecarComposeConfig{
+			Enabled:          true,
+			MetricsLibraries: detection.MetricsLibraries,
+			MetricsPort:      metricsPort,
+			MetricsPath:      metricsPath,
+			PrometheusPort:   9090,
+			GrafanaPort:      3001,
+			HasWorker:        detection.NeedsWorker(),
+			HasPostgres:      hasPostgres,
+			HasRedis:         hasRedis,
+			RetentionDays:    7,
 		}
 	}
 
