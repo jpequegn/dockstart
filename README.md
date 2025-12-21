@@ -10,6 +10,7 @@ A CLI tool that analyzes a project and generates Docker development environment 
 - **Service Detection**: Identifies PostgreSQL and Redis dependencies
 - **Log Aggregation**: Auto-configures Fluent Bit sidecar when structured logging libraries detected
 - **Background Workers**: Auto-generates worker sidecars when queue libraries detected (Bull, Celery, etc.)
+- **Metrics Stack**: Auto-generates Prometheus + Grafana when metrics libraries detected (prom-client, prometheus-client, etc.)
 - **Complete Dev Environment**: Generates devcontainer.json, docker-compose.yml, and Dockerfile
 - **VS Code Ready**: Generated files work with VS Code's Dev Containers extension
 
@@ -532,6 +533,146 @@ app.post('/upload', upload.single('image'), (req, res) => {
 
 See [docs/sidecars/file-processor.md](docs/sidecars/file-processor.md) for detailed documentation.
 
+## Metrics Stack Sidecar (Prometheus + Grafana)
+
+When dockstart detects Prometheus client libraries (prom-client, prometheus/client_golang, etc.), it generates a complete metrics observability stack.
+
+### How It Works
+
+The metrics stack provides automatic monitoring for your application:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│     App     │     │ Prometheus  │     │   Grafana   │
+│  /metrics   │────▶│  (scrapes)  │────▶│ (dashboards)│
+└─────────────┘     └─────────────┘     └─────────────┘
+       ▲                   │                   │
+       │              every 15s               │
+       └──────────────────────────────────────┘
+                    pre-built dashboards
+```
+
+### Detected Metrics Libraries
+
+| Language | Libraries |
+|----------|-----------|
+| Node.js | prom-client, express-prometheus-middleware |
+| Go | prometheus/client_golang, prometheus/promhttp |
+| Python | prometheus-client, prometheus-fastapi-instrumentator |
+| Rust | prometheus, metrics |
+
+### Example with Metrics
+
+```bash
+$ dockstart --dry-run ./my-api
+
+📂 Analyzing ./my-api...
+🔍 Detecting project configuration...
+   ✅ Detected: node 20 (confidence: 100%)
+   📊 Metrics: prom-client (endpoint: /metrics)
+   🔗 Sidecars: [prometheus, grafana]
+
+📝 Generating devcontainer.json...
+📝 Generating docker-compose.yml...
+📝 Generating Dockerfile...
+📝 Generating metrics stack configuration...
+   ✅ Created .devcontainer/prometheus/prometheus.yml
+   ✅ Created .devcontainer/grafana/provisioning/datasources/prometheus.yml
+   ✅ Created .devcontainer/grafana/provisioning/dashboards/provider.yml
+   ✅ Created .devcontainer/grafana/provisioning/dashboards/app-metrics.json
+
+✨ Done!
+```
+
+### Generated Configuration
+
+When metrics libraries are detected:
+
+```yaml
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    labels:
+      - "prometheus.scrape=true"
+      - "prometheus.port=3000"
+      - "prometheus.path=/metrics"
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+
+volumes:
+  prometheus-data:
+  grafana-data:
+```
+
+### Accessing the Stack
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Your App | http://localhost:3000 | - |
+| Prometheus | http://localhost:9090 | - |
+| Grafana | http://localhost:3001 | admin / admin |
+
+### Pre-built Dashboard
+
+The generated Grafana dashboard includes:
+
+- **Request Rate**: HTTP requests per second by method and path
+- **Response Time Percentiles**: p50, p95, p99 latency distribution
+- **Error Rate**: 5xx error percentage over time
+- **Requests by Status Code**: 2xx, 4xx, 5xx breakdown
+
+### Adding Custom Metrics
+
+```javascript
+// Node.js with prom-client
+const client = require('prom-client');
+
+// Counter for tracking requests
+const httpRequestsTotal = new client.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'path', 'status']
+});
+
+// Histogram for response times
+const httpRequestDuration = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration in seconds',
+  labelNames: ['method', 'path'],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 5]
+});
+
+// Expose metrics endpoint
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
+```
+
+See [docs/sidecars/metrics.md](docs/sidecars/metrics.md) for detailed documentation.
+
 ## Generated Files
 
 ### devcontainer.json
@@ -541,7 +682,7 @@ See [docs/sidecars/file-processor.md](docs/sidecars/file-processor.md) for detai
 - Port forwarding
 - Post-create commands
 
-### docker-compose.yml (when services or logging detected)
+### docker-compose.yml (when services or sidecars detected)
 - App service with build context
 - PostgreSQL service with named volume
 - Redis service with named volume
@@ -549,6 +690,7 @@ See [docs/sidecars/file-processor.md](docs/sidecars/file-processor.md) for detai
 - Worker sidecar (when queue libraries detected)
 - Database backup sidecar (when databases detected)
 - File processor sidecar (when upload libraries detected)
+- Prometheus + Grafana metrics stack (when metrics libraries detected)
 - Environment variables for service URLs
 
 ### Dockerfile
@@ -593,6 +735,7 @@ dockstart/
 │   │   ├── backup.go      # Database backup scripts
 │   │   ├── backup_sidecar.go # Backup container generator
 │   │   ├── processor_sidecar.go # File processor generator
+│   │   ├── metrics_sidecar.go # Prometheus + Grafana generator
 │   │   └── templates/
 │   └── models/             # Data structures
 └── Dockerfile              # Multi-stage container build
