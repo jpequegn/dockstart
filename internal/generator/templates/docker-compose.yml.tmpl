@@ -9,6 +9,9 @@ services:
       dockerfile: .devcontainer/Dockerfile
     volumes:
       - ..:/workspace:cached
+{{- if .FileProcessorSidecar.Enabled}}
+      - uploads:/uploads
+{{- end}}
     command: sleep infinity
 {{- if or .Services .LogSidecar.Enabled}}
     depends_on:
@@ -19,7 +22,7 @@ services:
       - fluent-bit
 {{- end}}
 {{- end}}
-{{- if or .Services .LogSidecar.Enabled}}
+{{- if or .Services .LogSidecar.Enabled .FileProcessorSidecar.Enabled}}
     environment:
 {{- range .Services}}
 {{- if eq .Name "postgres"}}
@@ -31,6 +34,11 @@ services:
 {{- end}}
 {{- if .LogSidecar.Enabled}}
       - LOG_LEVEL=debug
+{{- end}}
+{{- if .FileProcessorSidecar.Enabled}}
+      - UPLOAD_PATH=/uploads/pending
+      - PROCESSED_PATH=/uploads/processed
+      - FAILED_PATH=/uploads/failed
 {{- end}}
 {{- end}}
 {{- if .LogSidecar.Enabled}}
@@ -51,6 +59,9 @@ services:
       dockerfile: .devcontainer/Dockerfile
     volumes:
       - ..:/workspace:cached
+{{- if $.FileProcessorSidecar.Enabled}}
+      - uploads:/uploads
+{{- end}}
     command: {{.WorkerSidecar.Command}}
     depends_on:
       - app
@@ -67,6 +78,11 @@ services:
 {{- if eq .Name "redis"}}
       - REDIS_URL=redis://redis:6379
 {{- end}}
+{{- end}}
+{{- if $.FileProcessorSidecar.Enabled}}
+      - UPLOAD_PATH=/uploads/pending
+      - PROCESSED_PATH=/uploads/processed
+      - FAILED_PATH=/uploads/failed
 {{- end}}
     restart: unless-stopped
 {{- if $.LogSidecar.Enabled}}
@@ -116,7 +132,35 @@ services:
       - "24224:24224"
       - "24224:24224/udp"
 {{- end}}
-{{- if or .Services .LogSidecar.Enabled}}
+{{- if .FileProcessorSidecar.Enabled}}
+
+  # File processor sidecar
+  # Processes uploaded files (resize images, extract text, generate thumbnails)
+  file-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile.processor
+    volumes:
+      - uploads:/uploads
+    depends_on:
+      - app
+    environment:
+      - PENDING_PATH=/uploads/pending
+      - PROCESSING_PATH=/uploads/processing
+      - PROCESSED_PATH=/uploads/processed
+      - FAILED_PATH=/uploads/failed
+      - POLL_INTERVAL=5
+      - MAX_FILE_SIZE=52428800
+      - RETRY_COUNT=3
+      - NOTIFY_METHOD=file
+    deploy:
+      resources:
+        limits:
+          memory: {{.FileProcessorSidecar.MemoryLimit}}
+          cpus: '{{.FileProcessorSidecar.CPULimit}}'
+    restart: unless-stopped
+{{- end}}
+{{- if or .Services .LogSidecar.Enabled .BackupSidecar.Enabled .FileProcessorSidecar.Enabled}}
 
 volumes:
 {{- range .Services}}
@@ -132,6 +176,9 @@ volumes:
 {{- end}}
 {{- if .BackupSidecar.Enabled}}
   backups:
+{{- end}}
+{{- if .FileProcessorSidecar.Enabled}}
+  uploads:
 {{- end}}
 {{- end}}
 {{- if .BackupSidecar.Enabled}}
