@@ -57,6 +57,7 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 	loggingLibs, logFormat := d.detectLogging(deps)
 	queueLibs, workerCmd := d.detectQueue(deps, config.Package.Name)
 	uploadLibs, uploadPath := d.detectFileUpload(deps, path)
+	metricsLibs, metricsPort, metricsPath := d.detectMetrics(deps)
 
 	detection := &models.Detection{
 		Language:            "rust",
@@ -69,6 +70,9 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 		WorkerCommand:       workerCmd,
 		FileUploadLibraries: uploadLibs,
 		UploadPath:          uploadPath,
+		MetricsLibraries:    metricsLibs,
+		MetricsPort:         metricsPort,
+		MetricsPath:         metricsPath,
 	}
 
 	return detection, nil
@@ -378,4 +382,53 @@ func (d *RustDetector) findUploadPath(projectPath string) string {
 	}
 
 	return ""
+}
+
+// detectMetrics identifies Prometheus metrics libraries from Rust dependencies.
+// Returns the list of detected libraries, the metrics port, and the metrics path.
+func (d *RustDetector) detectMetrics(deps []string) ([]string, int, string) {
+	var libraries []string
+	metricsPort := 0  // 0 means use default
+	metricsPath := "" // Empty means use default "/metrics"
+
+	// Prometheus client libraries for Rust
+	metricsPackages := map[string]string{
+		"prometheus":                   "prometheus",
+		"prometheus-client":            "prometheus-client",
+		"metrics":                      "metrics",
+		"metrics-exporter-prometheus":  "metrics-exporter-prometheus",
+		"opentelemetry-prometheus":     "opentelemetry-prometheus",
+		"actix-web-prom":               "actix-web-prom",
+		"axum-prometheus":              "axum-prometheus",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		for pkg, name := range metricsPackages {
+			if depLower == pkg {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, name)
+				}
+				break
+			}
+		}
+	}
+
+	// If metrics libraries detected, default port is 8080 (Rust standard)
+	// and path is "/metrics"
+	if len(libraries) > 0 {
+		metricsPort = 8080
+		metricsPath = "/metrics"
+	}
+
+	return libraries, metricsPort, metricsPath
 }
