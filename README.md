@@ -533,6 +533,116 @@ app.post('/upload', upload.single('image'), (req, res) => {
 
 See [docs/sidecars/file-processor.md](docs/sidecars/file-processor.md) for detailed documentation.
 
+## Distributed Tracing Sidecar (Jaeger)
+
+When dockstart detects OpenTelemetry or Jaeger client libraries (like `@opentelemetry/sdk-node`, `go.opentelemetry.io/otel`, etc.), it automatically generates a **Jaeger distributed tracing backend** for collecting and visualizing request traces.
+
+### How It Works
+
+The tracing sidecar enables end-to-end request tracing across your application:
+
+```
+┌─────────────┐     ┌─────────────┐     ┌──────────────┐
+│     App     │     │   Jaeger    │     │   Jaeger UI  │
+│  (sends     │────▶│  (collects  │────▶│  (visualize) │
+│   traces)   │     │   spans)    │     │              │
+└─────────────┘     └─────────────┘     └──────────────┘
+       │                   │
+       └──────────────────┘
+   OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+```
+
+### Detected Tracing Libraries
+
+| Language | Libraries | Protocol |
+|----------|-----------|----------|
+| Node.js | @opentelemetry/sdk-node, @opentelemetry/auto-instrumentations-node, jaeger-client | OTLP HTTP |
+| Go | go.opentelemetry.io/otel, go.opentelemetry.io/otel/sdk | OTLP HTTP |
+| Python | opentelemetry-sdk, opentelemetry-api, opentelemetry-exporter-otlp | OTLP HTTP |
+| Rust | opentelemetry, opentelemetry-sdk, tracing-opentelemetry | OTLP HTTP |
+
+### Example with Distributed Tracing
+
+```bash
+$ dockstart --dry-run ./my-microservice
+
+📂 Analyzing ./my-microservice...
+🔍 Detecting project configuration...
+   ✅ Detected: node 20 (confidence: 100%)
+   🔭 Tracing: @opentelemetry/sdk-node (protocol: otlp)
+   🔗 Sidecars: [jaeger]
+
+📝 Generating devcontainer.json...
+📝 Generating docker-compose.yml...
+📝 Generating Dockerfile...
+
+✨ Done!
+```
+
+### Auto-Injected Environment Variables
+
+When tracing is detected, these variables are automatically set:
+
+```bash
+OTEL_SERVICE_NAME=my-microservice      # Your service name
+OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_TRACES_SAMPLER=always_on          # 100% sampling in dev
+```
+
+### Access the Jaeger UI
+
+Once running, access the Jaeger UI to search and visualize traces:
+
+**URL**: http://localhost:16686
+
+Features:
+- **Service Search**: Find traces by service name
+- **Trace Timeline**: Visualize request spans across services
+- **Span Details**: See duration, tags, logs, and errors
+- **Service Dependencies**: Understand how services interact
+
+### Example Trace Waterfall
+
+When you view a trace in Jaeger, you see:
+
+```
+GET /api/users (HTTP request)
+├── Express middleware (auto-instrumented)
+│   └── Duration: 5ms
+├── database query (auto-instrumented)
+│   ├── connect
+│   └── Duration: 15ms
+└── serialize response
+    └── Duration: 2ms
+Total: 22ms
+```
+
+### Quick Start
+
+1. **Generate devcontainer**:
+   ```bash
+   dockstart .
+   ```
+
+2. **Start services**:
+   ```bash
+   docker-compose -f .devcontainer/docker-compose.yml up
+   ```
+
+3. **Generate traces**:
+   ```bash
+   curl http://localhost:3000/api/users
+   ```
+
+4. **View in Jaeger**:
+   - Open http://localhost:16686
+   - Select your service from dropdown
+   - Click "Find Traces"
+   - Click on a trace to see the waterfall
+
+See [docs/TRACING_QUICKSTART.md](docs/TRACING_QUICKSTART.md) for quick start or [docs/sidecars/tracing.md](docs/sidecars/tracing.md) for full documentation.
+
 ## Metrics Stack Sidecar (Prometheus + Grafana)
 
 When dockstart detects Prometheus client libraries (prom-client, prometheus/client_golang, etc.), it generates a complete metrics observability stack.
