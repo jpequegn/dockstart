@@ -58,6 +58,7 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 	queueLibs, workerCmd := d.detectQueue(deps, config.Package.Name)
 	uploadLibs, uploadPath := d.detectFileUpload(deps, path)
 	metricsLibs, metricsPort, metricsPath := d.detectMetrics(deps)
+	tracingLibs, tracingProtocol := d.detectTracing(deps)
 
 	detection := &models.Detection{
 		Language:            "rust",
@@ -73,6 +74,8 @@ func (d *RustDetector) Detect(path string) (*models.Detection, error) {
 		MetricsLibraries:    metricsLibs,
 		MetricsPort:         metricsPort,
 		MetricsPath:         metricsPath,
+		TracingLibraries:    tracingLibs,
+		TracingProtocol:     tracingProtocol,
 	}
 
 	return detection, nil
@@ -382,6 +385,105 @@ func (d *RustDetector) findUploadPath(projectPath string) string {
 	}
 
 	return ""
+}
+
+// detectTracing identifies distributed tracing libraries from Rust dependencies.
+// Returns the list of detected libraries and the inferred protocol.
+func (d *RustDetector) detectTracing(deps []string) ([]string, string) {
+	var libraries []string
+	protocol := "unknown"
+
+	// OpenTelemetry crates (OTLP protocol)
+	otelCrates := []string{
+		"opentelemetry",
+		"opentelemetry-otlp",
+		"opentelemetry_sdk",
+		"tracing-opentelemetry",
+	}
+
+	// Jaeger-specific crates
+	jaegerCrates := []string{
+		"opentelemetry-jaeger",
+		"tracing-jaeger",
+	}
+
+	// Zipkin-specific crates
+	zipkinCrates := []string{
+		"opentelemetry-zipkin",
+		"zipkin",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+
+		// Check OpenTelemetry crates
+		for _, crate := range otelCrates {
+			if depLower == crate {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == crate {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, crate)
+				}
+				if protocol == "unknown" {
+					protocol = "otlp"
+				}
+				break
+			}
+		}
+
+		// Check Jaeger crates
+		for _, crate := range jaegerCrates {
+			if depLower == crate {
+				found := false
+				for _, lib := range libraries {
+					if lib == crate {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, crate)
+				}
+				if protocol == "unknown" {
+					protocol = "jaeger"
+				}
+				break
+			}
+		}
+
+		// Check Zipkin crates
+		for _, crate := range zipkinCrates {
+			if depLower == crate {
+				found := false
+				for _, lib := range libraries {
+					if lib == crate {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, crate)
+				}
+				if protocol == "unknown" {
+					protocol = "zipkin"
+				}
+				break
+			}
+		}
+	}
+
+	// If we have any tracing libraries but couldn't determine protocol, default to otlp
+	if len(libraries) > 0 && protocol == "unknown" {
+		protocol = "otlp"
+	}
+
+	return libraries, protocol
 }
 
 // detectMetrics identifies Prometheus metrics libraries from Rust dependencies.

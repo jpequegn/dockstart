@@ -62,6 +62,7 @@ func (d *NodeDetector) Detect(path string) (*models.Detection, error) {
 	queueLibs, workerCmd := d.detectQueue(pkg)
 	uploadLibs, uploadPath := d.detectFileUpload(pkg, path)
 	metricsLibs, metricsPort, metricsPath := d.detectMetrics(pkg)
+	tracingLibs, tracingProtocol := d.detectTracing(pkg)
 
 	detection := &models.Detection{
 		Language:            "node",
@@ -77,6 +78,8 @@ func (d *NodeDetector) Detect(path string) (*models.Detection, error) {
 		MetricsLibraries:    metricsLibs,
 		MetricsPort:         metricsPort,
 		MetricsPath:         metricsPath,
+		TracingLibraries:    tracingLibs,
+		TracingProtocol:     tracingProtocol,
 	}
 
 	return detection, nil
@@ -403,6 +406,84 @@ func (d *NodeDetector) findUploadPath(projectPath string) string {
 
 	// Default to "uploads" if no directory found
 	return ""
+}
+
+// detectTracing identifies distributed tracing libraries from dependencies.
+// Returns the list of detected libraries and the inferred protocol.
+func (d *NodeDetector) detectTracing(pkg packageJSON) ([]string, string) {
+	var libraries []string
+	protocol := "unknown"
+
+	// Merge all dependencies for checking
+	allDeps := make(map[string]string)
+	for k, v := range pkg.Dependencies {
+		allDeps[k] = v
+	}
+	for k, v := range pkg.DevDependencies {
+		allDeps[k] = v
+	}
+
+	// OpenTelemetry SDK packages (OTLP protocol)
+	otelPackages := []string{
+		"@opentelemetry/sdk-node",
+		"@opentelemetry/sdk-trace-node",
+		"@opentelemetry/sdk-trace-base",
+		"@opentelemetry/api",
+		"@opentelemetry/auto-instrumentations-node",
+		"@opentelemetry/exporter-trace-otlp-http",
+		"@opentelemetry/exporter-trace-otlp-grpc",
+		"@opentelemetry/exporter-trace-otlp-proto",
+	}
+
+	// Jaeger-specific packages
+	jaegerPackages := []string{
+		"jaeger-client",
+		"@opentelemetry/exporter-jaeger",
+	}
+
+	// Zipkin-specific packages
+	zipkinPackages := []string{
+		"zipkin",
+		"zipkin-javascript-opentracing",
+		"@opentelemetry/exporter-zipkin",
+	}
+
+	// Check for OTLP/OpenTelemetry packages
+	for _, pkg := range otelPackages {
+		if _, exists := allDeps[pkg]; exists {
+			libraries = append(libraries, pkg)
+			if protocol == "unknown" {
+				protocol = "otlp"
+			}
+		}
+	}
+
+	// Check for Jaeger packages
+	for _, pkg := range jaegerPackages {
+		if _, exists := allDeps[pkg]; exists {
+			libraries = append(libraries, pkg)
+			if protocol == "unknown" {
+				protocol = "jaeger"
+			}
+		}
+	}
+
+	// Check for Zipkin packages
+	for _, pkg := range zipkinPackages {
+		if _, exists := allDeps[pkg]; exists {
+			libraries = append(libraries, pkg)
+			if protocol == "unknown" {
+				protocol = "zipkin"
+			}
+		}
+	}
+
+	// If we have any tracing libraries but couldn't determine protocol, default to otlp
+	if len(libraries) > 0 && protocol == "unknown" {
+		protocol = "otlp"
+	}
+
+	return libraries, protocol
 }
 
 // detectMetrics identifies Prometheus metrics libraries from dependencies.
