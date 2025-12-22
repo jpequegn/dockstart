@@ -81,9 +81,10 @@ func (g *DevcontainerGenerator) buildConfig(detection *models.Detection, project
 		RemoteUser: "root", // Default, will be overridden per language
 	}
 
-	// Determine if we need docker-compose (when services, sidecars, or metrics detected)
+	// Determine if we need docker-compose (when services, sidecars, metrics, or tracing detected)
 	config.UseCompose = len(detection.Services) > 0 || detection.HasStructuredLogging() ||
-		detection.NeedsMetrics() || detection.NeedsWorker() || detection.NeedsFileProcessor()
+		detection.NeedsMetrics() || detection.NeedsWorker() || detection.NeedsFileProcessor() ||
+		detection.NeedsTracing()
 
 	// Language-specific configuration
 	switch detection.Language {
@@ -148,6 +149,11 @@ func (g *DevcontainerGenerator) buildConfig(detection *models.Detection, project
 	if detection.NeedsMetrics() {
 		config.ForwardPorts = append(config.ForwardPorts, 9090)  // Prometheus
 		config.ForwardPorts = append(config.ForwardPorts, 3001)  // Grafana
+	}
+
+	// Add Jaeger port if tracing is detected
+	if detection.NeedsTracing() {
+		config.ForwardPorts = append(config.ForwardPorts, 16686) // Jaeger UI
 	}
 
 	return config
