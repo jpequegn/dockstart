@@ -19,13 +19,17 @@ services:
       - "prometheus.port={{.MetricsSidecar.MetricsPort}}"
       - "prometheus.path={{.MetricsSidecar.MetricsPath}}"
 {{- end}}
-{{- if or .Services .LogSidecar.Enabled}}
+{{- if or .Services .LogSidecar.Enabled .TracingSidecar.Enabled}}
     depends_on:
 {{- range .Services}}
       - {{.Name}}
 {{- end}}
 {{- if .LogSidecar.Enabled}}
       - fluent-bit
+{{- end}}
+{{- if .TracingSidecar.Enabled}}
+      jaeger:
+        condition: service_healthy
 {{- end}}
 {{- end}}
 {{- if or .Services .LogSidecar.Enabled .FileProcessorSidecar.Enabled .TracingSidecar.Enabled}}
@@ -49,9 +53,9 @@ services:
 {{- if .TracingSidecar.Enabled}}
       # OpenTelemetry configuration
       - OTEL_SERVICE_NAME={{.TracingSidecar.ServiceName}}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
-      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-      - OTEL_TRACES_SAMPLER=always_on
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:{{.TracingSidecar.OTLPHTTPPort}}
+      - OTEL_EXPORTER_OTLP_PROTOCOL={{.TracingSidecar.OTLPProtocol}}
+      - OTEL_TRACES_SAMPLER={{.TracingSidecar.OTLPSampler}}
 {{- end}}
 {{- end}}
 {{- if .LogSidecar.Enabled}}
@@ -81,6 +85,10 @@ services:
 {{- range .Services}}
       - {{.Name}}
 {{- end}}
+{{- if .TracingSidecar.Enabled}}
+      jaeger:
+        condition: service_healthy
+{{- end}}
     environment:
       - WORKER_CONCURRENCY=2
       - NODE_ENV=development
@@ -100,9 +108,9 @@ services:
 {{- if $.TracingSidecar.Enabled}}
       # OpenTelemetry configuration
       - OTEL_SERVICE_NAME={{$.TracingSidecar.ServiceName}}-worker
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
-      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-      - OTEL_TRACES_SAMPLER=always_on
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:{{$.TracingSidecar.OTLPHTTPPort}}
+      - OTEL_EXPORTER_OTLP_PROTOCOL={{$.TracingSidecar.OTLPProtocol}}
+      - OTEL_TRACES_SAMPLER={{$.TracingSidecar.OTLPSampler}}
 {{- end}}
     restart: unless-stopped
 {{- if $.LogSidecar.Enabled}}
@@ -259,10 +267,12 @@ services:
       - "{{.TracingSidecar.JaegerUIPort}}:16686"  # Web UI
     environment:
       - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=memory
+      - MEMORY_MAX_TRACES={{.TracingSidecar.MaxTraces}}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
-      interval: 10s
-      timeout: 5s
+      interval: 5s
+      timeout: 3s
       retries: 3
     restart: unless-stopped
 {{- end}}
