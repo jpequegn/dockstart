@@ -50,6 +50,7 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 	queueLibs, workerCmd := d.detectQueue(mod)
 	uploadLibs, uploadPath := d.detectFileUpload(mod, path)
 	metricsLibs, metricsPort, metricsPath := d.detectMetrics(mod)
+	tracingLibs, tracingProtocol := d.detectTracing(mod)
 
 	detection := &models.Detection{
 		Language:            "go",
@@ -65,6 +66,8 @@ func (d *GoDetector) Detect(path string) (*models.Detection, error) {
 		MetricsLibraries:    metricsLibs,
 		MetricsPort:         metricsPort,
 		MetricsPath:         metricsPath,
+		TracingLibraries:    tracingLibs,
+		TracingProtocol:     tracingProtocol,
 	}
 
 	return detection, nil
@@ -402,6 +405,104 @@ func (d *GoDetector) findUploadPath(projectPath string) string {
 	}
 
 	return ""
+}
+
+// detectTracing identifies distributed tracing libraries from Go dependencies.
+// Returns the list of detected libraries and the inferred protocol.
+func (d *GoDetector) detectTracing(mod *goMod) ([]string, string) {
+	var libraries []string
+	protocol := "unknown"
+
+	// OpenTelemetry packages (OTLP protocol)
+	otelPatterns := []string{
+		"go.opentelemetry.io/otel",
+		"go.opentelemetry.io/otel/sdk",
+		"go.opentelemetry.io/otel/exporters/otlp",
+		"go.opentelemetry.io/contrib",
+	}
+
+	// Jaeger-specific packages
+	jaegerPatterns := []string{
+		"github.com/uber/jaeger-client-go",
+		"github.com/jaegertracing/jaeger-client-go",
+		"go.opentelemetry.io/otel/exporters/jaeger",
+	}
+
+	// Zipkin-specific packages
+	zipkinPatterns := []string{
+		"github.com/openzipkin/zipkin-go",
+		"go.opentelemetry.io/otel/exporters/zipkin",
+	}
+
+	for _, req := range mod.Requires {
+		// Check OpenTelemetry packages
+		for _, pattern := range otelPatterns {
+			if strings.HasPrefix(req, pattern) {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == pattern {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, pattern)
+				}
+				if protocol == "unknown" {
+					protocol = "otlp"
+				}
+				break
+			}
+		}
+
+		// Check Jaeger packages
+		for _, pattern := range jaegerPatterns {
+			if strings.HasPrefix(req, pattern) {
+				found := false
+				for _, lib := range libraries {
+					if lib == pattern {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, pattern)
+				}
+				if protocol == "unknown" {
+					protocol = "jaeger"
+				}
+				break
+			}
+		}
+
+		// Check Zipkin packages
+		for _, pattern := range zipkinPatterns {
+			if strings.HasPrefix(req, pattern) {
+				found := false
+				for _, lib := range libraries {
+					if lib == pattern {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, pattern)
+				}
+				if protocol == "unknown" {
+					protocol = "zipkin"
+				}
+				break
+			}
+		}
+	}
+
+	// If we have any tracing libraries but couldn't determine protocol, default to otlp
+	if len(libraries) > 0 && protocol == "unknown" {
+		protocol = "otlp"
+	}
+
+	return libraries, protocol
 }
 
 // detectMetrics identifies Prometheus metrics libraries from Go dependencies.

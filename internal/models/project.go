@@ -52,6 +52,14 @@ type Detection struct {
 	// MetricsPath is the detected or inferred path for the metrics endpoint
 	// Default: "/metrics"
 	MetricsPath string
+
+	// TracingLibraries is a list of detected distributed tracing libraries
+	// (e.g., "@opentelemetry/sdk-node" for Node.js, "go.opentelemetry.io/otel" for Go)
+	TracingLibraries []string
+
+	// TracingProtocol is the detected or inferred tracing protocol
+	// Values: "otlp", "jaeger", "zipkin", "unknown"
+	TracingProtocol string
 }
 
 // Project represents a fully analyzed project with all its detections.
@@ -197,6 +205,36 @@ func (d *Detection) GetMetricsPort() int {
 	default:
 		return 3000
 	}
+}
+
+// HasTracingLibrary checks if a specific tracing library was detected.
+func (d *Detection) HasTracingLibrary(library string) bool {
+	for _, l := range d.TracingLibraries {
+		if l == library {
+			return true
+		}
+	}
+	return false
+}
+
+// AddTracingLibrary adds a tracing library to the detection if not already present.
+func (d *Detection) AddTracingLibrary(library string) {
+	if !d.HasTracingLibrary(library) {
+		d.TracingLibraries = append(d.TracingLibraries, library)
+	}
+}
+
+// NeedsTracing returns true if any distributed tracing library was detected.
+func (d *Detection) NeedsTracing() bool {
+	return len(d.TracingLibraries) > 0
+}
+
+// GetTracingProtocol returns the tracing protocol, defaulting to "otlp".
+func (d *Detection) GetTracingProtocol() string {
+	if d.TracingProtocol != "" && d.TracingProtocol != "unknown" {
+		return d.TracingProtocol
+	}
+	return "otlp"
 }
 
 // BackupConfig represents the configuration for database backup sidecar.

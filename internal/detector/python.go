@@ -93,6 +93,7 @@ func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, er
 	queueLibs, workerCmd := d.detectQueue(deps, config.Project.Name, config.Tool.Poetry.Name)
 	uploadLibs, uploadPath := d.detectFileUpload(deps, filepath.Dir(path))
 	metricsLibs, metricsPort, metricsPath := d.detectMetrics(deps)
+	tracingLibs, tracingProtocol := d.detectTracing(deps)
 
 	detection := &models.Detection{
 		Language:            "python",
@@ -108,6 +109,8 @@ func (d *PythonDetector) detectFromPyproject(path string) (*models.Detection, er
 		MetricsLibraries:    metricsLibs,
 		MetricsPort:         metricsPort,
 		MetricsPath:         metricsPath,
+		TracingLibraries:    tracingLibs,
+		TracingProtocol:     tracingProtocol,
 	}
 
 	return detection, nil
@@ -158,6 +161,7 @@ func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection,
 	queueLibs, workerCmd := d.detectQueue(deps, "", "")
 	uploadLibs, uploadPath := d.detectFileUpload(deps, filepath.Dir(path))
 	metricsLibs, metricsPort, metricsPath := d.detectMetrics(deps)
+	tracingLibs, tracingProtocol := d.detectTracing(deps)
 
 	detection := &models.Detection{
 		Language:            "python",
@@ -173,6 +177,8 @@ func (d *PythonDetector) detectFromRequirements(path string) (*models.Detection,
 		MetricsLibraries:    metricsLibs,
 		MetricsPort:         metricsPort,
 		MetricsPath:         metricsPath,
+		TracingLibraries:    tracingLibs,
+		TracingProtocol:     tracingProtocol,
 	}
 
 	return detection, nil
@@ -502,6 +508,115 @@ func (d *PythonDetector) findUploadPath(projectPath string) string {
 	}
 
 	return ""
+}
+
+// detectTracing identifies distributed tracing libraries from Python dependencies.
+// Returns the list of detected libraries and the inferred protocol.
+func (d *PythonDetector) detectTracing(deps []string) ([]string, string) {
+	var libraries []string
+	protocol := "unknown"
+
+	// OpenTelemetry packages (OTLP protocol)
+	otelPackages := []string{
+		"opentelemetry-sdk",
+		"opentelemetry-api",
+		"opentelemetry-exporter-otlp",
+		"opentelemetry-exporter-otlp-proto-grpc",
+		"opentelemetry-exporter-otlp-proto-http",
+		"opentelemetry-instrumentation",
+		"opentelemetry-instrumentation-fastapi",
+		"opentelemetry-instrumentation-flask",
+		"opentelemetry-instrumentation-django",
+	}
+
+	// Jaeger-specific packages
+	jaegerPackages := []string{
+		"jaeger-client",
+		"opentelemetry-exporter-jaeger",
+	}
+
+	// Zipkin-specific packages
+	zipkinPackages := []string{
+		"py-zipkin",
+		"zipkin",
+		"opentelemetry-exporter-zipkin",
+		"opentelemetry-exporter-zipkin-json",
+		"opentelemetry-exporter-zipkin-proto-http",
+	}
+
+	for _, dep := range deps {
+		depLower := strings.ToLower(dep)
+		// Normalize underscores to hyphens for comparison
+		depNormalized := strings.ReplaceAll(depLower, "_", "-")
+
+		// Check OpenTelemetry packages
+		for _, pkg := range otelPackages {
+			if depNormalized == pkg || depLower == strings.ReplaceAll(pkg, "-", "_") {
+				// Avoid duplicates
+				found := false
+				for _, lib := range libraries {
+					if lib == pkg {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, pkg)
+				}
+				if protocol == "unknown" {
+					protocol = "otlp"
+				}
+				break
+			}
+		}
+
+		// Check Jaeger packages
+		for _, pkg := range jaegerPackages {
+			if depNormalized == pkg || depLower == strings.ReplaceAll(pkg, "-", "_") {
+				found := false
+				for _, lib := range libraries {
+					if lib == pkg {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, pkg)
+				}
+				if protocol == "unknown" {
+					protocol = "jaeger"
+				}
+				break
+			}
+		}
+
+		// Check Zipkin packages
+		for _, pkg := range zipkinPackages {
+			if depNormalized == pkg || depLower == strings.ReplaceAll(pkg, "-", "_") {
+				found := false
+				for _, lib := range libraries {
+					if lib == pkg {
+						found = true
+						break
+					}
+				}
+				if !found {
+					libraries = append(libraries, pkg)
+				}
+				if protocol == "unknown" {
+					protocol = "zipkin"
+				}
+				break
+			}
+		}
+	}
+
+	// If we have any tracing libraries but couldn't determine protocol, default to otlp
+	if len(libraries) > 0 && protocol == "unknown" {
+		protocol = "otlp"
+	}
+
+	return libraries, protocol
 }
 
 // detectMetrics identifies Prometheus metrics libraries from Python dependencies.
