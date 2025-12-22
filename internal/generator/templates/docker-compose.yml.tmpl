@@ -28,7 +28,7 @@ services:
       - fluent-bit
 {{- end}}
 {{- end}}
-{{- if or .Services .LogSidecar.Enabled .FileProcessorSidecar.Enabled}}
+{{- if or .Services .LogSidecar.Enabled .FileProcessorSidecar.Enabled .TracingSidecar.Enabled}}
     environment:
 {{- range .Services}}
 {{- if eq .Name "postgres"}}
@@ -45,6 +45,13 @@ services:
       - UPLOAD_PATH=/uploads/pending
       - PROCESSED_PATH=/uploads/processed
       - FAILED_PATH=/uploads/failed
+{{- end}}
+{{- if .TracingSidecar.Enabled}}
+      # OpenTelemetry configuration
+      - OTEL_SERVICE_NAME={{.TracingSidecar.ServiceName}}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_SAMPLER=always_on
 {{- end}}
 {{- end}}
 {{- if .LogSidecar.Enabled}}
@@ -89,6 +96,13 @@ services:
       - UPLOAD_PATH=/uploads/pending
       - PROCESSED_PATH=/uploads/processed
       - FAILED_PATH=/uploads/failed
+{{- end}}
+{{- if $.TracingSidecar.Enabled}}
+      # OpenTelemetry configuration
+      - OTEL_SERVICE_NAME={{$.TracingSidecar.ServiceName}}-worker
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_SAMPLER=always_on
 {{- end}}
     restart: unless-stopped
 {{- if $.LogSidecar.Enabled}}
@@ -232,6 +246,25 @@ services:
       - redis
     restart: unless-stopped
 {{- end}}
+{{- end}}
+{{- if .TracingSidecar.Enabled}}
+
+  # Jaeger distributed tracing (all-in-one)
+  # Collects traces via OTLP protocol
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "{{.TracingSidecar.OTLPGRPCPort}}:4317"   # OTLP gRPC
+      - "{{.TracingSidecar.OTLPHTTPPort}}:4318"   # OTLP HTTP
+      - "{{.TracingSidecar.JaegerUIPort}}:16686"  # Web UI
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
 {{- end}}
 {{- if or .Services .LogSidecar.Enabled .BackupSidecar.Enabled .FileProcessorSidecar.Enabled .MetricsSidecar.Enabled}}
 

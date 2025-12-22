@@ -126,6 +126,30 @@ type MetricsSidecarComposeConfig struct {
 	RetentionDays int
 }
 
+// TracingSidecarComposeConfig holds configuration for the Jaeger distributed tracing stack.
+type TracingSidecarComposeConfig struct {
+	// Enabled indicates whether to include the tracing sidecar
+	Enabled bool
+
+	// TracingLibraries is the list of detected tracing libraries
+	TracingLibraries []string
+
+	// TracingProtocol is the detected tracing protocol (otlp, jaeger, zipkin)
+	TracingProtocol string
+
+	// JaegerUIPort is the external port for Jaeger UI (default: 16686)
+	JaegerUIPort int
+
+	// OTLPGRPCPort is the port for OTLP gRPC collector (default: 4317)
+	OTLPGRPCPort int
+
+	// OTLPHTTPPort is the port for OTLP HTTP collector (default: 4318)
+	OTLPHTTPPort int
+
+	// ServiceName is the service name for tracing
+	ServiceName string
+}
+
 // ComposeConfig holds the configuration for generating docker-compose.yml.
 type ComposeConfig struct {
 	// Name is the project name (used for database names, etc.)
@@ -148,6 +172,9 @@ type ComposeConfig struct {
 
 	// MetricsSidecar holds configuration for the Prometheus + Grafana metrics stack
 	MetricsSidecar MetricsSidecarComposeConfig
+
+	// TracingSidecar holds configuration for the Jaeger distributed tracing stack
+	TracingSidecar TracingSidecarComposeConfig
 }
 
 // ComposeGenerator generates docker-compose.yml files.
@@ -291,6 +318,19 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 			HasPostgres:      hasPostgres,
 			HasRedis:         hasRedis,
 			RetentionDays:    7,
+		}
+	}
+
+	// Configure tracing sidecar if tracing libraries are detected
+	if detection.NeedsTracing() {
+		config.TracingSidecar = TracingSidecarComposeConfig{
+			Enabled:          true,
+			TracingLibraries: detection.TracingLibraries,
+			TracingProtocol:  detection.GetTracingProtocol(),
+			JaegerUIPort:     16686,
+			OTLPGRPCPort:     4317,
+			OTLPHTTPPort:     4318,
+			ServiceName:      projectName,
 		}
 	}
 
