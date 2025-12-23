@@ -21,15 +21,24 @@ services:
 {{- end}}
 {{- if or .Services .LogSidecar.Enabled .TracingSidecar.Enabled}}
     depends_on:
+{{- if .TracingSidecar.Enabled}}
+{{- range .Services}}
+      {{.Name}}:
+        condition: service_started
+{{- end}}
+{{- if .LogSidecar.Enabled}}
+      fluent-bit:
+        condition: service_started
+{{- end}}
+      jaeger:
+        condition: service_healthy
+{{- else}}
 {{- range .Services}}
       - {{.Name}}
 {{- end}}
 {{- if .LogSidecar.Enabled}}
       - fluent-bit
 {{- end}}
-{{- if .TracingSidecar.Enabled}}
-      jaeger:
-        condition: service_healthy
 {{- end}}
 {{- end}}
 {{- if or .Services .LogSidecar.Enabled .FileProcessorSidecar.Enabled .TracingSidecar.Enabled}}
@@ -81,13 +90,20 @@ services:
 {{- end}}
     command: {{.WorkerSidecar.Command}}
     depends_on:
+{{- if .TracingSidecar.Enabled}}
+      app:
+        condition: service_started
+{{- range .Services}}
+      {{.Name}}:
+        condition: service_started
+{{- end}}
+      jaeger:
+        condition: service_healthy
+{{- else}}
       - app
 {{- range .Services}}
       - {{.Name}}
 {{- end}}
-{{- if .TracingSidecar.Enabled}}
-      jaeger:
-        condition: service_healthy
 {{- end}}
     environment:
       - WORKER_CONCURRENCY=2
