@@ -1,325 +1,414 @@
-# Distributed Tracing Sidecar
-
-Dockstart can generate a distributed tracing sidecar using Jaeger to help you trace requests across your services.
+# Distributed Tracing Sidecar (Jaeger)
 
 ## Overview
 
-When dockstart detects OpenTelemetry libraries in your project, it automatically adds:
-- **Jaeger All-in-One**: Trace collection and visualization
-- **OTLP Environment Variables**: Pre-configured SDK settings
-- **Health Checks**: Ensure tracing is ready before app starts
+When dockstart detects OpenTelemetry or Jaeger client libraries in your project, it automatically generates a **Jaeger distributed tracing backend**. This provides a complete observability solution for development environments without requiring manual configuration.
 
-## Quick Start
+## What You Get
 
-### 1. Add OpenTelemetry SDK to Your Project
+- **Jaeger All-in-One Container**: A single container running the collector, storage, and UI
+- **Auto-Configuration**: Your application receives OpenTelemetry environment variables automatically
+- **In-Memory Storage**: Traces are stored in memory (perfect for dev environments)
+- **100% Sampling**: All traces are captured in development (no sampling loss)
+- **Health Checks**: Docker Compose ensures Jaeger is healthy before starting your app
 
-**Node.js:**
-```bash
-npm install @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node
-```
+## Detection
 
-**Go:**
-```bash
-go get go.opentelemetry.io/otel
-go get go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp
-```
+### Supported Libraries by Language
 
-**Python:**
-```bash
-pip install opentelemetry-sdk opentelemetry-instrumentation
-```
+| Language | Libraries | Protocol |
+|----------|-----------|----------|
+| **Node.js** | `@opentelemetry/sdk-node`<br/>`@opentelemetry/auto-instrumentations-node`<br/>`jaeger-client` | OTLP HTTP (4318) |
+| **Go** | `go.opentelemetry.io/otel`<br/>`go.opentelemetry.io/otel/sdk` | OTLP HTTP (4318) |
+| **Python** | `opentelemetry-sdk`<br/>`opentelemetry-api`<br/>`opentelemetry-exporter-otlp` | OTLP HTTP (4318) |
+| **Rust** | `opentelemetry`<br/>`opentelemetry-sdk`<br/>`tracing-opentelemetry` | OTLP HTTP (4318) |
 
-**Rust:**
-```bash
-cargo add opentelemetry opentelemetry-otlp tracing-opentelemetry
-```
+## Usage
 
-### 2. Generate Docker Environment
+### Automatic Setup
+
+When you run dockstart on a project with tracing libraries:
 
 ```bash
-dockstart
+$ dockstart ./my-microservice
+
+📂 Analyzing ./my-microservice...
+🔍 Detecting project configuration...
+   ✅ Detected: node 20 (confidence: 100%)
+   🔭 Tracing: @opentelemetry/sdk-node (protocol: otlp)
+   🔗 Sidecars: [jaeger]
+
+Generated .devcontainer/docker-compose.yml with:
+   - app service
+   - jaeger service (distributed tracing)
+
+Environment variables will be injected:
+   OTEL_SERVICE_NAME=my-microservice
+   OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+   OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+   OTEL_TRACES_SAMPLER=always_on
 ```
 
-### 3. Access Jaeger UI
+### Docker Compose Output
 
-Open http://localhost:16686 to view traces.
+The generated `docker-compose.yml` includes:
 
-## How It Works
+```yaml
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    environment:
+      # OpenTelemetry configuration
+      - OTEL_SERVICE_NAME=my-microservice
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+      - OTEL_TRACES_SAMPLER=always_on
+    depends_on:
+      jaeger:
+        condition: service_healthy
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "16686:16686" # Jaeger UI
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - SPAN_STORAGE_TYPE=memory
+      - MEMORY_MAX_TRACES=10000
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:16686"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
 ```
-┌─────────────┐    OTLP :4317     ┌─────────────┐
-│     App     │─────────────────►│   Jaeger    │
-└─────────────┘                   │   :16686    │
-                                  └─────────────┘
-      │                                  ▲
-      │ trace context                    │
-      ▼ (HTTP headers)                   │
-┌─────────────┐    OTLP :4317           │
-│   Service   │──────────────────────────┘
-│      B      │
-└─────────────┘
-```
-
-1. Your app sends spans to Jaeger via OTLP (port 4317)
-2. Trace context propagates via HTTP headers between services
-3. Jaeger collects, stores, and visualizes the traces
-4. View in Jaeger UI at http://localhost:16686
 
 ## Environment Variables
 
-Dockstart injects these environment variables into your app container:
+### Injected into Your Application
 
-| Variable | Value | Description |
-|----------|-------|-------------|
-| `OTEL_SERVICE_NAME` | `${PROJECT_NAME}` | Your service name in traces |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://jaeger:4317` | Where to send traces |
-| `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | Sample all traces |
-| `OTEL_PROPAGATORS` | `tracecontext,baggage` | W3C standard propagation |
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `OTEL_SERVICE_NAME` | Project name | Identifies your service in traces |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://jaeger:4318` | Where to send traces |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | Protocol format |
+| `OTEL_TRACES_SAMPLER` | `always_on` | Capture 100% of traces |
 
-## Instrumenting Your Code
+### Jaeger Configuration
 
-### Node.js (Auto-Instrumentation)
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `COLLECTOR_OTLP_ENABLED` | `true` | Enable OTLP receiver |
+| `SPAN_STORAGE_TYPE` | `memory` | Use in-memory storage |
+| `MEMORY_MAX_TRACES` | `10000` | Max traces to keep in memory |
+
+## Accessing Jaeger
+
+### Jaeger UI
+
+Once your development environment is running, access the Jaeger UI:
+
+**URL**: http://localhost:16686
+
+The UI provides:
+- **Service List**: View all services sending traces
+- **Trace Search**: Find traces by service, operation, tags, or time range
+- **Span Waterfall**: Visualize request flow across services
+- **Trace Statistics**: View operation latencies and error rates
+
+### Ports
+
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| `4317` | OTLP gRPC | Receive traces via gRPC |
+| `4318` | OTLP HTTP | Receive traces via HTTP |
+| `16686` | HTTP | Jaeger UI |
+
+## Finding Traces
+
+### Step 1: Start Your Service
+
+```bash
+docker-compose -f .devcontainer/docker-compose.yml up
+```
+
+Your app will automatically send traces to Jaeger.
+
+### Step 2: Generate Traffic
+
+Make requests to your application to generate traces:
+
+```bash
+# Example for Node.js Express app
+curl http://localhost:3000/api/users
+curl http://localhost:3000/api/users/123
+```
+
+### Step 3: View Traces in Jaeger
+
+1. Open http://localhost:16686
+2. In the **Service** dropdown, select your service (e.g., `my-microservice`)
+3. Click **Find Traces**
+4. View traces in the list
+5. Click on a trace to see:
+   - **Span waterfall** (timeline of operations)
+   - **Span details** (tags, logs, duration)
+   - **Service dependencies** (if multi-service)
+
+## OpenTelemetry Setup by Language
+
+### Node.js
+
+Install dependencies:
+
+```bash
+npm install \
+  @opentelemetry/sdk-node \
+  @opentelemetry/api \
+  @opentelemetry/auto-instrumentations-node \
+  @opentelemetry/sdk-node
+```
+
+Initialize at app startup (`index.js`):
 
 ```javascript
-// tracing.js - Load this first
 const { NodeSDK } = require('@opentelemetry/sdk-node');
 const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
 
 const sdk = new NodeSDK({
-  autoInstrumentations: getNodeAutoInstrumentations(),
+  traceExporter: new OTLPTraceExporter({
+    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318/v1/traces',
+  }),
+  instrumentations: [getNodeAutoInstrumentations()],
 });
 
 sdk.start();
+
+// Your Express/Fastify/other app initialization follows...
 ```
 
-```javascript
-// package.json
-{
-  "scripts": {
-    "start": "node --require ./tracing.js app.js"
-  }
-}
+### Go
+
+Install dependencies:
+
+```bash
+go get go.opentelemetry.io/otel \
+  go.opentelemetry.io/otel/sdk \
+  go.opentelemetry.io/otel/exporter/otlp/otlptrace/otlptracehttp
 ```
 
-### Go (Manual Instrumentation)
+Initialize at app startup (`main.go`):
 
 ```go
 package main
 
 import (
+    "context"
     "go.opentelemetry.io/otel"
-    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-    "go.opentelemetry.io/otel/sdk/trace"
+    "go.opentelemetry.io/otel/sdk/resource"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
+    "go.opentelemetry.io/otel/exporter/otlp/otlptrace/otlptracehttp"
 )
 
-func initTracer() (*trace.TracerProvider, error) {
-    exporter, err := otlptracegrpc.New(context.Background())
-    if err != nil {
-        return nil, err
-    }
-
-    tp := trace.NewTracerProvider(
-        trace.WithBatcher(exporter),
+func init() {
+    ctx := context.Background()
+    exporter, _ := otlptracehttp.New(ctx)
+    
+    res, _ := resource.New(ctx,
+        resource.WithFromEnv(),
+        resource.WithTelemetrySDKVersion(),
     )
-    otel.SetTracerProvider(tp)
-    return tp, nil
+    
+    provider := sdktrace.NewTracerProvider(
+        sdktrace.WithResource(res),
+        sdktrace.WithBatcher(exporter),
+    )
+    
+    otel.SetTracerProvider(provider)
 }
 ```
 
-### Python (Auto-Instrumentation)
+### Python
+
+Install dependencies:
 
 ```bash
-# Run with auto-instrumentation
-opentelemetry-instrument python app.py
+pip install \
+  opentelemetry-sdk \
+  opentelemetry-api \
+  opentelemetry-exporter-otlp
 ```
 
-Or programmatic setup:
+Initialize at app startup:
 
 ```python
-from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry import trace
 
-provider = TracerProvider()
-processor = BatchSpanProcessor(OTLPSpanExporter())
-provider.add_span_processor(processor)
-trace.set_tracer_provider(provider)
+exporter = OTLPSpanExporter()
+trace.set_tracer_provider(TracerProvider())
+trace.get_tracer_provider().add_span_processor(SimpleSpanProcessor(exporter))
 ```
 
-## Jaeger UI Features
+### Rust
 
-### Trace Search
-- Filter by service, operation, tags, duration
-- Time range selection
-- Error-only filtering
+Add dependencies to `Cargo.toml`:
 
-### Trace View
-- Waterfall timeline of spans
-- Span details (tags, logs, process info)
-- Critical path highlighting
-
-### Service Graph
-- Automatic dependency mapping
-- Traffic flow visualization
-- Error rate indicators
-
-### Trace Comparison
-- Compare two traces side-by-side
-- Identify performance regressions
-
-## Ports Reference
-
-| Port | Protocol | Description |
-|------|----------|-------------|
-| 16686 | HTTP | Jaeger UI |
-| 4317 | gRPC | OTLP traces (recommended) |
-| 4318 | HTTP | OTLP traces (fallback) |
-| 6831 | UDP | Jaeger Compact (legacy) |
-| 9411 | HTTP | Zipkin compatible |
-
-## Sampling Strategies
-
-### Development (Default)
-```yaml
-OTEL_TRACES_SAMPLER=parentbased_always_on  # 100% sampling
+```toml
+[dependencies]
+opentelemetry = "0.20"
+opentelemetry-otlp = "0.13"
+opentelemetry-sdk = "0.20"
+tracing = "0.1"
+tracing-opentelemetry = "0.21"
 ```
 
-### High-Volume Development
-```yaml
-OTEL_TRACES_SAMPLER=parentbased_traceidratio
-OTEL_TRACES_SAMPLER_ARG=0.5  # 50% sampling
+Initialize at app startup:
+
+```rust
+use opentelemetry_otlp::new_pipeline;
+use tracing_opentelemetry::OpenTelemetryLayer;
+
+let tracer = new_pipeline()
+    .tracing()
+    .install_simple()
+    .unwrap();
+
+let telemetry = OpenTelemetryLayer::new(tracer);
+// Add to tracing subscriber...
 ```
 
-### Disable Tracing
-```yaml
-OTEL_TRACES_SAMPLER=always_off
-```
+## Analyzing Traces
 
-## Trace Context Propagation
+### Understanding the Span Waterfall
 
-For traces to connect across services, propagate context via HTTP headers:
+The span waterfall shows:
+- **Timeline**: Left to right indicates progression of time
+- **Nested spans**: Indentation shows parent-child relationships
+- **Duration**: Bar width indicates span duration
+- **Service boundaries**: Color changes indicate different services
 
-### W3C Trace Context (Default)
-```
-traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
-tracestate: congo=t61rcWkgMzE
-```
+### Common Operations
 
-### B3 Format (Zipkin Compatible)
-```
-X-B3-TraceId: 80f198ee56343ba864fe8b2a57d3eff7
-X-B3-SpanId: e457b5a2e4d86bd1
-X-B3-Sampled: 1
-```
+1. **Find slow requests**:
+   - Click a trace's total duration to sort by slowest
+   - Look for spans with large bars
 
-OpenTelemetry SDKs handle propagation automatically when using:
-```yaml
-OTEL_PROPAGATORS=tracecontext,baggage,b3multi
-```
+2. **Find errors**:
+   - Look for spans with red bars (errors)
+   - Click the span to see error details and stack traces
 
-## Integration with Other Sidecars
+3. **Trace a request across services** (microservices):
+   - View the span waterfall across multiple services
+   - See where time is spent in each service
 
-### With Metrics (Prometheus + Grafana)
-Grafana can visualize Jaeger traces alongside metrics:
+## Multi-Service Tracing
+
+If you have multiple services in docker-compose, each with tracing enabled:
 
 ```yaml
-# Grafana datasource (auto-provisioned)
-datasources:
-  - name: Jaeger
-    type: jaeger
-    url: http://jaeger:16686
+services:
+  api:
+    environment:
+      - OTEL_SERVICE_NAME=api-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+  
+  backend:
+    environment:
+      - OTEL_SERVICE_NAME=backend-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+  
+  database:
+    environment:
+      - OTEL_SERVICE_NAME=database-service
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
 ```
 
-### With Logging (Fluent Bit)
-Include trace ID in your logs for correlation:
-
-```javascript
-// Node.js example
-const { trace } = require('@opentelemetry/api');
-
-function log(message) {
-  const span = trace.getActiveSpan();
-  const traceId = span?.spanContext().traceId;
-  console.log(JSON.stringify({ message, traceId }));
-}
-```
+Jaeger will automatically:
+- Collect traces from all services
+- Show service dependencies
+- Correlate related spans across services
+- Show distributed trace waterfall
 
 ## Troubleshooting
 
 ### No traces appearing
 
-1. **Check Jaeger is healthy:**
+1. **Check environment variables**:
+   ```bash
+   docker-compose exec app env | grep OTEL
+   ```
+
+2. **Verify Jaeger is running**:
    ```bash
    curl http://localhost:16686/api/services
    ```
 
-2. **Verify OTLP endpoint:**
+3. **Ensure SDK is initialized** before HTTP server starts:
+   - NodeJS: Must call `sdk.start()` before `app.listen()`
+   - Go: Initialize tracer provider before creating handlers
+   - Python: Initialize before Flask/FastAPI app creation
+
+4. **Check health**:
    ```bash
-   docker compose logs jaeger | grep OTLP
+   docker-compose ps jaeger
    ```
 
-3. **Check app environment:**
-   ```bash
-   docker compose exec app env | grep OTEL
-   ```
+### Traces not appearing in UI
 
-### Traces missing spans
+- Make sure service name matches your `OTEL_SERVICE_NAME`
+- Generate some traffic: `curl http://localhost:3000/`
+- UI updates every few seconds; refresh if needed
 
-1. **Ensure context propagation:**
-   - Check HTTP client is instrumented
-   - Verify headers are passed between services
+### Memory issues
 
-2. **Check sampling:**
-   - Confirm `OTEL_TRACES_SAMPLER` is set correctly
-   - Parent spans may control child sampling
+If running many requests, adjust `MEMORY_MAX_TRACES`:
 
-### High memory usage
+```yaml
+jaeger:
+  environment:
+    - MEMORY_MAX_TRACES=50000  # Increase if needed
+```
 
-1. **Reduce span volume:**
-   ```yaml
-   OTEL_TRACES_SAMPLER=parentbased_traceidratio
-   OTEL_TRACES_SAMPLER_ARG=0.1  # 10% sampling
-   ```
+## Storage Options
 
-2. **Limit retention:**
-   ```yaml
-   jaeger:
-     command:
-       - "--memory.max-traces=10000"
-   ```
+For longer data retention, replace in-memory storage:
 
-## Resource Usage
+### With Elasticsearch
 
-| Component | Memory | CPU (Idle) | CPU (Active) |
-|-----------|--------|------------|--------------|
-| Jaeger All-in-One | ~100MB | <1% | 2-5% |
+```yaml
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.0
+    environment:
+      - discovery.type=single-node
 
-## Best Practices
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - SPAN_STORAGE_TYPE=elasticsearch
+      - ES_SERVER_URLS=http://elasticsearch:9200
+```
 
-1. **Meaningful span names**: Use operation names, not URLs
-   - Good: `user.create`, `order.process`
-   - Bad: `POST /api/v1/users`
+### With Cassandra
 
-2. **Add context via tags**:
-   ```javascript
-   span.setAttribute('user.id', userId);
-   span.setAttribute('order.amount', amount);
-   ```
+```yaml
+jaeger:
+  environment:
+    - SPAN_STORAGE_TYPE=cassandra
+    - CASSANDRA_SERVERS=cassandra
+    - CASSANDRA_KEYSPACE=jaeger_v1_datacenter1
+```
 
-3. **Record errors properly**:
-   ```javascript
-   span.recordException(error);
-   span.setStatus({ code: SpanStatusCode.ERROR });
-   ```
+## Next Steps
 
-4. **Use semantic conventions**:
-   - `http.method`, `http.url`, `http.status_code`
-   - `db.system`, `db.name`, `db.operation`
-
-## References
-
-- [OpenTelemetry Documentation](https://opentelemetry.io/docs/)
-- [Jaeger Documentation](https://www.jaegertracing.io/docs/)
-- [OpenTelemetry Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/)
-- [W3C Trace Context](https://www.w3.org/TR/trace-context/)
+- [View working examples](../examples/tracing/)
+- [OpenTelemetry documentation](https://opentelemetry.io/docs/)
+- [Jaeger documentation](https://www.jaegertracing.io/docs/)
+- [View metrics sidecar documentation](./metrics.md)

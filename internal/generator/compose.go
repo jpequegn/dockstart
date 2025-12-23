@@ -146,6 +146,15 @@ type TracingSidecarComposeConfig struct {
 	// OTLPHTTPPort is the port for OTLP HTTP collector (default: 4318)
 	OTLPHTTPPort int
 
+	// OTLPProtocol is the OTLP protocol format (default: http/protobuf)
+	OTLPProtocol string
+
+	// OTLPSampler is the OTLP sampler configuration (default: always_on)
+	OTLPSampler string
+
+	// MaxTraces is the maximum number of traces in memory (default: 10000)
+	MaxTraces int
+
 	// ServiceName is the service name for tracing
 	ServiceName string
 }
@@ -330,6 +339,9 @@ func (g *ComposeGenerator) buildConfig(detection *models.Detection, projectName 
 			JaegerUIPort:     16686,
 			OTLPGRPCPort:     4317,
 			OTLPHTTPPort:     4318,
+			OTLPProtocol:     "http/protobuf",
+			OTLPSampler:      "always_on",
+			MaxTraces:        10000,
 			ServiceName:      projectName,
 		}
 	}
